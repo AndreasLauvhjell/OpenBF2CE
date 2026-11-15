@@ -10,6 +10,7 @@
 #include "../../Core/System.h"                      // [INFERRED] Core/System.cpp attested (anon-ns)
 #include "../../IO/SettingsManager.h"               // [INFERRED] IO/SettingsManager.cpp attested
 #include "../../Core/SettingsRepostitory.h"
+#include "../../IO/Console/Console.h"                  // io::ConsoleEdit* codes [CHOSEN, not recovered]
 
 // [UNRESOLVED] memory_update_modules takes const char*, but this call omits it.
 // The declaration's default preserves the current call until argument evidence resolves it.
@@ -758,6 +759,23 @@ static int bf2MessageHandler(HWND /*hwnd*/, UINT message, WPARAM wParam, LPARAM 
             return 0;
         if (settings->boolGet("GSDedicated", false))
             return 0;
+        // [CHOSEN, not recovered] Edit-line navigation for the console: Left/Right (with Ctrl: one
+        // word), Ctrl+PageUp/PageDown (start/end of the line) go into the console character ring as
+        // io::ConsoleEdit* codes, in order with the typed characters; BF2Console::updateConsole
+        // hands them to editKey. Home and End are left alone: the default controls bind End to the
+        // console toggle and Home to GILeader. Retail ignores these keys in the console. Key repeat
+        // applies, as for typing.
+        {
+            const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            switch (wParam)
+            {
+            case VK_LEFT:  pushConsoleChar(static_cast<char>(ctrl ? io::ConsoleEditWordLeft : io::ConsoleEditLeft)); break;
+            case VK_RIGHT: pushConsoleChar(static_cast<char>(ctrl ? io::ConsoleEditWordRight : io::ConsoleEditRight)); break;
+            case VK_PRIOR: if (ctrl) pushConsoleChar(static_cast<char>(io::ConsoleEditHome)); break;
+            case VK_NEXT:  if (ctrl) pushConsoleChar(static_cast<char>(io::ConsoleEditEnd)); break;
+            default: break;
+            }
+        }
         if (!menuLogic || wParam != VK_DELETE)      // 46
             return 0;
         pushMenuKey(127);                           // DEL reaches the menu as 127
@@ -768,7 +786,15 @@ static int bf2MessageHandler(HWND /*hwnd*/, UINT message, WPARAM wParam, LPARAM 
             return 0;
         if (settings->boolGet("GSDedicated", false))
             return 0;
-        pushConsoleChar(static_cast<char>(wParam)); // every character, console open or not
+        // [CHOSEN, not recovered] The key left of 1 (scan code 0x29) toggles the console. Retail
+        // only swallows the character 0xA7 ('§', BF2Console::updateConsole), which is that key's
+        // character on Swedish layouts; on other layouts (Norwegian '|', US '`') the character
+        // leaks into the freshly opened console. Keep every character that key produces out of
+        // the console ring, whatever the layout. The menu key ring below is unchanged.
+        // Issue: [TODO link the upstream issue before submitting].
+        if (((lParam >> 16) & 0xFF) != 0x29
+            && !io::isConsoleEditCode(static_cast<unsigned char>(wParam)))   // [CHOSEN] reserved
+            pushConsoleChar(static_cast<char>(wParam)); // every character, console open or not
         if (!menuLogic || (menuLogic->getConsole() && menuLogic->getConsole()->getConsoleActive()))
             return 0;                               // an open console owns the keys
         if (!GetAsyncKeyState(VK_CONTROL) || (GetAsyncKeyState(VK_CONTROL) && GetAsyncKeyState(VK_MENU)))

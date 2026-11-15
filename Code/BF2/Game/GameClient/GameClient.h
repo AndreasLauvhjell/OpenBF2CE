@@ -198,6 +198,33 @@ private:
     bool                   m_punkBuster;             // +0x159
 };
 
+// [CHOSEN, not recovered] OpenBF2 diagnostic overlays; retail BF2.exe draws no such text.
+// openbf2.stats.net shows only the local connection's rates, ping and loss - no addresses, ports or
+// player names. openbf2.stats.perf and openbf2.stats.frame show the client's own frame timing
+// (Core/FrameTiming.h); stats.frame also writes the frame-timing log.
+int  getNetGraphOverlayMode();
+/// @param mode 1 shows the overlay; any other value hides it.
+void setNetGraphOverlayMode(int mode);
+int  getPerfGraphOverlayMode();
+/// @param mode 1 starts measuring and shows the summary; any other value hides it.
+void setPerfGraphOverlayMode(int mode);
+int  getFrameTimingOverlayMode();
+/// @param mode 1 starts measuring, shows the full breakdown and writes the log; any other value stops.
+void setFrameTimingOverlayMode(int mode);
+int  getAudioStatsOverlayMode();
+/// @param mode 1 shows the Sound.showStats text in the overlay column; any other value hides it.
+void setAudioStatsOverlayMode(int mode);
+/// 1 only while every stats block is on.
+int  getAllStatsOverlayMode();
+/// @param mode 1 turns every stats block on (net, perf, frame, audio); any other value turns all off.
+void setAllStatsOverlayMode(int mode);
+/// Queues this frame's overlay text on the DebugTextWriter singleton: the enabled blocks in a fixed
+/// order (net, perf, audio) in columns from the left edge, and frame on the right edge, so they
+/// never overlap. Does nothing when no block is enabled or the writer is unavailable; the net block
+/// also needs a connection.
+/// Call once per rendered frame, before the scene ends; the writer clears its queue every frame.
+void drawDiagnosticOverlays();
+
 } // namespace hfe
 } // namespace dice
 

@@ -173,6 +173,11 @@ extern ISoundEngine* g_soundEngine;
 // Console rows registered and removed by BfSoundModule; Sound.* rows are client-only.
 ConsoleObjectList& bfSoundConsoleObjects();
 
+// [CHOSEN, not recovered] Appends the sound statistics lines BfSound::drawStats builds (the
+// Sound.showStats text), read from g_bfSound's engine; "No stats available." when there are none.
+// Shared with the openbf2.stats.audio overlay so both show the same figures.
+void collectSoundStatsLines(std::vector<std::string>& lines);
+
 #if !DEDICATED
 
 // Client sound facade implementing engine callbacks for file access, tracing and obstruction.

@@ -72,6 +72,26 @@ private:
     bool m_historyOutput;                            // retail+3CA
     std::uint32_t m_field3cc;                         // [UNRESOLVED] allocation tail, untouched
 };
+
+// [CHOSEN, not recovered] openbf2.console.* filter for the chat history that HudChat copies into
+// the console when a line leaves the HUD. Lines are tagged and the console hides filtered ones, also
+// ones printed before the filter changed. The HUD itself is not affected. Every category starts on,
+// which is retail behaviour; the mute switch silences all of them without forgetting the
+// per-category settings. Kept outside the class so the retail layout above is unchanged.
+enum ConsoleChatCategory
+{
+    ConsoleChatChat = 0,     // all, team and squad chat (history block 0)
+    ConsoleChatKills,        // kill lines (block 1 with a player colour)
+    ConsoleChatEvents,       // game and server messages: overrun, flags, round info (colour kind 6)
+    ConsoleChatRadio,        // radio commands with the rank icon (colour kind 4)
+    ConsoleChatPersonal,     // commander chat, notices such as "you were killed by", votes,
+                             // requests (colour kinds 5, 7, 8)
+    ConsoleChatCategoryCount
+};
+bool getConsoleChatCategory(ConsoleChatCategory category);
+void setConsoleChatCategory(ConsoleChatCategory category, bool shown);
+bool getConsoleChatMute();
+void setConsoleChatMute(bool mute);
 } } }
 #endif
 #endif

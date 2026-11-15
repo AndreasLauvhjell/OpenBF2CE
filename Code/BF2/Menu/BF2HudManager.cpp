@@ -1126,6 +1126,31 @@ void BF2HudManager::outputChatMessage(std::string text)
     text = replaceChatMarker(text, std::string("\xA7" "1"), std::string(""));
     text = replaceChatMarker(text, std::string("\xA7" "2"), std::string(""));
     text = replaceChatMarker(text, std::string("\xA7" "3"), std::string(""));
+    // [CHOSEN, not recovered] Also drop the section-sign 'C' colour toggles, which the console font
+    // cannot show and retail copies through raw (kill lines read "§C#PLAYERCOLOR1#name§C1001 ...").
+    // The grammar is the HUD renderers' one (see feature/chat-color-codes, Menu/ColorEscape.h): the
+    // toggle is followed by four payload characters, or by a #TOKEN# that the HUD substitutes.
+    {
+        std::string stripped;
+        stripped.reserve(text.size());
+        for (std::string::size_type i = 0; i < text.size(); )
+        {
+            if (text[i] == '\xA7' && i + 1 < text.size() && text[i + 1] == 'C')
+            {
+                i += 2;
+                if (i < text.size() && text[i] == '#')
+                {
+                    const std::string::size_type close = text.find('#', i + 1);
+                    i = (close == std::string::npos) ? text.size() : close + 1;
+                }
+                else
+                    i = (i + 4 < text.size()) ? i + 4 : text.size();
+                continue;
+            }
+            stripped += text[i++];
+        }
+        text.swap(stripped);
+    }
     std::ostringstream output;
     output << text;
     io::mainConsole->output(output.str()); // unconditional; no newline is added

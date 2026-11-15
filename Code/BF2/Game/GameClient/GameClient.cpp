@@ -19,6 +19,12 @@
 #include "../../Core/System.h"                       // g_system->getSimulationRate
 #include "../IGameLogic.h"
 #include "../Main/BF2Engine.h"                       // bf2Engine->demo (isPlayingDemo)
+#include "../Main/BF2Window.h"                       // the net-stat overlay's vertical placement
+#include "../../IO/TickCalculator.h"                 // the net-stat overlay's tick rate
+#include "../../Core/FrameTiming.h"                  // [CHOSEN, not recovered] stats.perf / stats.frame figures
+#include <vector>
+#include <map>                                        // the stats overlay tab stops
+#include <algorithm>                                  // std::max
 #include "../Main/Demo.h"
 #include "../Main/BF2ClientSeams.h"                  // hudManager, g_distributedLightRenderer
 #include "../DistributedLightRenderer/DistributedLightRenderer.h"
@@ -383,6 +389,7 @@ bool GameClient::load()
 // false. Demo playback and lightmap rendering use their own receive/update paths.
 bool GameClient::update(int steps, float dt)
 {
+    frametiming::simBegin();   // [CHOSEN, not recovered] openbf2.stats.frame sim split
     bool ok = true;
     if (world::playerManager)                        // : dword_A08F60 - the PlayerManager, not the
         world::playerManager->getNumberOfPlayers();  // ObjectManager; PE +0x88 == ELF +0x88 (the dtor is
@@ -406,6 +413,7 @@ bool GameClient::update(int steps, float dt)
         static_cast<Player*>(local)->update(static_cast<float>(delta));
     }
 
+    frametiming::simLap(frametiming::SecSPlayer);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
     const bool demoPlaying = demoPlaybackActive(m_demoRecorder);
     if (!demoPlaying)
     {
@@ -414,6 +422,7 @@ bool GameClient::update(int steps, float dt)
     }
     else if (!m_isRunning && steps)
         ok = receive(dt);
+    frametiming::simLap(frametiming::SecSReceive);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     if (m_disconnectRequested)
     {
@@ -458,6 +467,7 @@ bool GameClient::update(int steps, float dt)
                 else
                     g_bfSound->update(steps);                               // PE +0x18
             }
+            frametiming::simLap(frametiming::SecSSound);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
         }
     }
     // Voting uses the frame's dt argument, not the separately sampled delta time.
@@ -470,6 +480,7 @@ bool GameClient::update(int steps, float dt)
     // playDemo/connect), so the base update (client then server status) runs.
     if (m_showNetGraph)
         m_networkableStats->update();
+    frametiming::simLap(frametiming::SecSSend);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
     return ok;
 }
 
@@ -789,9 +800,11 @@ bool GameClient::stepWorld(float dt)
         if (fireMask)
             sendFireMessages(fireMask, player, vehicle, false);
     }
+    frametiming::simLap(frametiming::SecSEvents);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     sampleLocalInput(dt);
     world::objectManager->updateObjects(dt, static_cast<world::UpdateFreqencyType>(0), 3);   // +0x28
+    frametiming::simLap(frametiming::SecSObjects);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     // the same four gates as stepLocalPrediction, re-tested rather than shared.
     if (world::IPlayer* const local = world::playerManager->getLocalHumanPlayer())   // +0x30
@@ -800,6 +813,7 @@ bool GameClient::stepWorld(float dt)
             performMobilePhysicsUpdate(dt, local->getVehicle(), false);
     }
     world::physicsNodeManager->update(dt, 0, 0);                        // PE +0x20 = ELF +0x24
+    frametiming::simLap(frametiming::SecSPhysics);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     if (!isLightmapRenderingNode())
     {
@@ -810,15 +824,18 @@ bool GameClient::stepWorld(float dt)
         if (local && local->getVehicle() && local->getVehicle()->getParent())
             performYawStabilisation(local->getVehicle());
     }
+    frametiming::simLap(frametiming::SecSRemote);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     // resetCachedCollisionObjects brackets the world-collision pass - called on both sides.
     world::responsePhysicsManager->resetCachedCollisionObjects();       // PE +0x24 = ELF +0x28
     updateWorldCollision(dt);                                           // Game::
     world::responsePhysicsManager->resetCachedCollisionObjects();
+    frametiming::simLap(frametiming::SecSCollision);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     stepLocalPrediction(dt);
     world::physicsNodeManager->postFrameUpdate();                       // PE +0x24 = ELF +0x28
     world::responsePhysicsManager->postFrameUpdate();                   // PE +0x30 = ELF +0x34
+    frametiming::simLap(frametiming::SecSLocalPred);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
 
     ++m_frameCount;                                                     // +0xF0
     memory::nextPhysicFrame();                                          // Memory.dll, ds:87F640
@@ -1607,6 +1624,7 @@ bool GameClient::handleControlObjectState(io::BitStream*, unsigned short network
     {
         WorldPref::resetTickCount(tick);
         buffer->popFront();
+        const long long replayStart = frametiming::simStart();   // [CHOSEN, not recovered] openbf2.stats.frame sim split
         io::networkManager->getDescriptor(networkableId);           // result discarded
 
         for (std::list<ActionBufferEntry>::const_iterator it = buffer->m_entries.begin();
@@ -1638,6 +1656,7 @@ bool GameClient::handleControlObjectState(io::BitStream*, unsigned short network
             world::responsePhysicsManager->reset();                  // PE +0x20
             performMobileCollisionUpdate(deltaTime, local->getVehicle(), false);
         }
+        frametiming::simAdd(frametiming::SecSReplay, replayStart);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
     }
 
     return true;                                                     // `mov al, 1`
@@ -2542,6 +2561,640 @@ void GameClient::handleDataBlock(EventNode* node, void* data)
     }
     default:
         break;
+    }
+}
+
+// [CHOSEN, not recovered] The openbf2.stats.net overlay. The writer is reached through its
+// registered singleton and queueTextColoured (+0x30).
+namespace {
+int g_netGraphOverlayMode = 0;
+int g_audioStatsOverlayMode = 0;   // openbf2.stats.audio
+
+// The DebugTextWriter singleton's interface up to the slot this overlay calls, in the shipped
+// order (geom::DebugTextWriter, GeomMisc/DebugTextWriter.cpp). Only queueTextColoured is called.
+class IOverlayTextWriter : public IBase
+{
+public:
+    virtual bool setFont(const std::string& path) = 0;                               // +0x10
+    virtual bool isEnabled() const = 0;                                              // +0x14
+    virtual void setEnabled(bool enabled) = 0;                                       // +0x18
+    virtual unsigned getColour() const = 0;                                          // +0x1C
+    virtual void setColour(unsigned colour) = 0;                                     // +0x20
+    virtual void queueWorldGroupColoured(const Vec3& position, unsigned colour,
+        const std::vector<std::string>& text, int spacing, int alignment,
+        int bottomAligned) = 0;                                                      // +0x24
+    virtual void queueWorldTextColoured(const Vec3& position, unsigned colour,
+        const std::string& text, int alignment) = 0;                                 // +0x28
+    virtual void queueGroupColoured(int x, int y, unsigned colour,
+        const std::vector<std::string>& text, int spacing, int alignment,
+        int bottomAligned) = 0;                                                      // +0x2C
+    virtual void queueTextColoured(int x, int y, unsigned colour,
+        const std::string& text, int alignment) = 0;                                 // +0x30
+
+protected:
+    ~IOverlayTextWriter() {}
+};
+
+const int          kNetGraphX           = 6;
+const int          kNetGraphLineSpacing = 16;
+const int          kOverlayTopMargin    = 40;            // below the renderer.drawFps line
+// Both columns stay above the bottom HUD (health, ammo and stamina bars on the left, the weapon
+// panel on the right). They scale with the window height and reach about 7 % of it above the
+// bottom edge, so 10 % plus 8 px clears them.
+int overlayBottomMargin(int height) { return height / 10 + 8; }
+// Colours chosen to stand out against BF2 scenery (sand, grass, foliage, grey and blue sky), which
+// light green and light yellow did not: cyan, violet, magenta and neon orange hardly occur in nature.
+const unsigned int kNetGraphColour      = 0xFF30E8FFu;   // opaque cyan, argb
+const unsigned int kPerfGraphColour     = 0xFFB890FFu;   // opaque light violet
+const unsigned int kFrameTimingColour   = 0xFFFF70FFu;   // opaque magenta (no shadow, so the loudest)
+const unsigned int kOverlayOutlineColour = 0xFF000000u;  // opaque black
+const unsigned int kAudioStatsColour    = 0xFFFFA040u;   // opaque orange
+const int          kOverlayColumnGap    = 40;            // px between two columns
+
+// Lost packets as a percentage of all packets in that direction; zero when nothing moved.
+float lossPercent(float lostPerSecond, float deliveredPerSecond)
+{
+    const float total = lostPerSecond + deliveredPerSecond;
+    return total > 0.0f ? lostPerSecond * 100.0f / total : 0.0f;
+}
+} // namespace
+
+int getNetGraphOverlayMode()
+{
+    return g_netGraphOverlayMode;
+}
+
+void setNetGraphOverlayMode(int mode)
+{
+    g_netGraphOverlayMode = mode;
+}
+
+int getPerfGraphOverlayMode()
+{
+    return frametiming::hasUser(frametiming::UserPerfGraph) ? 1 : 0;
+}
+
+void setPerfGraphOverlayMode(int mode)
+{
+    frametiming::setUser(frametiming::UserPerfGraph, mode == 1);
+}
+
+int getFrameTimingOverlayMode()
+{
+    return frametiming::hasUser(frametiming::UserFrameTiming) ? 1 : 0;
+}
+
+void setFrameTimingOverlayMode(int mode)
+{
+    frametiming::setUser(frametiming::UserFrameTiming, mode == 1);
+}
+
+int getAudioStatsOverlayMode()
+{
+    return g_audioStatsOverlayMode;
+}
+
+void setAudioStatsOverlayMode(int mode)
+{
+    g_audioStatsOverlayMode = (mode == 1) ? 1 : 0;
+}
+
+// openbf2.stats.showall: 1 only while every stats block is on.
+int getAllStatsOverlayMode()
+{
+    return (getNetGraphOverlayMode() == 1 && getPerfGraphOverlayMode() == 1
+            && getFrameTimingOverlayMode() == 1 && getAudioStatsOverlayMode() == 1) ? 1 : 0;
+}
+
+void setAllStatsOverlayMode(int mode)
+{
+    setNetGraphOverlayMode(mode == 1 ? 1 : 0);
+    setPerfGraphOverlayMode(mode == 1 ? 1 : 0);
+    setFrameTimingOverlayMode(mode == 1 ? 1 : 0);
+    setAudioStatsOverlayMode(mode == 1 ? 1 : 0);
+}
+
+namespace {
+
+// One overlay line and its colour.
+struct OverlayLine
+{
+    std::string  text;
+    unsigned int colour;
+    int          group;       // the stats block whose tab stops this line shares; -1 = plain text
+};
+
+void addLine(std::vector<OverlayLine>& out, const std::string& text, unsigned int colour)
+{
+    OverlayLine line;
+    line.text   = text;
+    line.colour = colour;
+    line.group  = -1;
+    out.push_back(line);
+}
+
+// One empty line between two blocks.
+void addGap(std::vector<OverlayLine>& out)
+{
+    if (!out.empty())
+        addLine(out, std::string(), 0);
+}
+
+// openbf2.stats.net: the local connection's rates, ping and loss. Nothing while not connected.
+void addNetGraphLines(std::vector<OverlayLine>& out)
+{
+    if (g_netGraphOverlayMode != 1 || !game)
+        return;
+    IGameClient* const client = static_cast<IGameClient*>(game->queryInterface(IID_IGameClient));
+    if (!client)
+        return;
+    io::ConnectionStatus status;
+    if (!client->getConnectionStatus(status))
+        return;
+
+    // The simulation tick is the engine's fixed-step rate; client and server share the same constant,
+    // so this is also the server's tick rate. Loss field directions follow ConnectionStatus's
+    // [INFERRED] names.
+    const TickCalculator* const ticks = bf2Engine->getTickCalculator();
+    const float tickRate = ticks && ticks->tickLength > 0.0f ? 1.0f / ticks->tickLength : 0.0f;
+    addGap(out);
+    addLine(out, formatString("ping: %u ms", status.ping), kNetGraphColour);
+    addLine(out, formatString("tick: %.0f Hz", tickRate), kNetGraphColour);
+    // The interpolation and extrapolation times the client applies now (set when joining and
+    // retuned by ClientConnection's auto-adjust where that is present).
+    if (io::networkManager)
+        addLine(out, formatString("interp: %d ms  extrap: %d ms",
+                                  io::networkManager->getInterpolationTime(),
+                                  io::networkManager->getExtrapolationTime()),
+                kNetGraphColour);
+    addLine(out, formatString("in: %.0f pkt/s  %.1f kB/s",
+                              status.packetsReceivedPerSecond, status.bytesReceivedPerSecond / 1000.0f),
+            kNetGraphColour);
+    addLine(out, formatString("out: %.0f pkt/s  %.1f kB/s",
+                              status.packetsSentPerSecond, status.bytesSentPerSecond / 1000.0f),
+            kNetGraphColour);
+    addLine(out, formatString("loss: %.1f%% in  %.1f%% out",
+                              lossPercent(status.packetsLostReceivePerSecond,
+                                          status.packetsReceivedPerSecond),
+                              lossPercent(status.packetsLostSendPerSecond, status.packetsSentPerSecond)),
+            kNetGraphColour);
+}
+
+#if defined(_WIN32)
+// True when the file contains the given ASCII marker, case-sensitive. Reads the file once in 64 KiB
+// chunks with an overlap so a marker across a chunk border is still found.
+bool fileContainsMarker(const char* path, const char* marker)
+{
+    std::FILE* f = std::fopen(path, "rb");
+    if (!f)
+        return false;
+    const std::size_t markerLength = std::strlen(marker);
+    std::vector<char> buffer(65536 + markerLength);
+    std::size_t carry = 0;
+    bool found = false;
+    for (;;)
+    {
+        const std::size_t got = std::fread(&buffer[carry], 1, 65536, f);
+        const std::size_t total = carry + got;
+        for (std::size_t i = 0; !found && i + markerLength <= total; ++i)
+            found = std::memcmp(&buffer[i], marker, markerLength) == 0;
+        if (found || got == 0)
+            break;
+        carry = total < markerLength - 1 ? total : markerLength - 1;
+        std::memmove(&buffer[0], &buffer[total - carry], carry);
+    }
+    std::fclose(f);
+    return found;
+}
+#endif
+
+// The graphics API behind the renderer, for the stats.perf "api" line. The rebuilt renderer always
+// talks Direct3D 9; what matters is which d3d9.dll answers. Windows' own (System32 or SysWOW64) is
+// native D3D9. A d3d9.dll loaded from anywhere else is a wrapper: DXVK (D3D9 on Vulkan) is
+// recognised by the "DXVK" marker in the file, anything else is shown by its folder. Worked out
+// once and cached; the DLL cannot change while the game runs.
+const std::string& rendererApiLabel()
+{
+    static std::string s_label;
+    if (!s_label.empty())
+        return s_label;
+#if defined(_WIN32)
+    HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
+    char path[MAX_PATH] = { 0 };
+    if (!d3d9 || !GetModuleFileNameA(d3d9, path, MAX_PATH))
+    {
+        s_label = "Direct3D 9 (d3d9.dll not loaded)";
+        return s_label;
+    }
+    std::string dir(path);
+    const std::string::size_type slash = dir.find_last_of("\\/");
+    dir = slash == std::string::npos ? std::string() : dir.substr(0, slash);
+
+    char systemDir[MAX_PATH] = { 0 };
+    char wow64Dir[MAX_PATH]  = { 0 };
+    GetSystemDirectoryA(systemDir, MAX_PATH);
+    GetSystemWow64DirectoryA(wow64Dir, MAX_PATH);   // empty on a 32-bit Windows
+    const bool system = (systemDir[0] && _stricmp(dir.c_str(), systemDir) == 0)
+                     || (wow64Dir[0] && _stricmp(dir.c_str(), wow64Dir) == 0);
+    if (system)
+        s_label = "Direct3D 9 (native)";
+    else if (fileContainsMarker(path, "DXVK") || fileContainsMarker(path, "dxvk"))
+        s_label = "Direct3D 9 -> Vulkan (DXVK)";
+    else
+        s_label = "Direct3D 9 (wrapper d3d9.dll in " + dir + ")";
+#else
+    s_label = "Direct3D 9";
+#endif
+    return s_label;
+}
+
+// openbf2.stats.perf: a short summary of where the frame time goes, averaged over the profiler's
+// last ~2 s interval, and the graphics API in use. The limit label is a heuristic: CAP when the
+// game.lockFps wait takes over a quarter of the frame, GPU when Present plus the GPU fence wait do,
+// CPU otherwise.
+void addPerfGraphLines(std::vector<OverlayLine>& out)
+{
+    if (!frametiming::hasUser(frametiming::UserPerfGraph))
+        return;
+    addGap(out);
+    const frametiming::Snapshot* const perf = frametiming::snapshot();
+    if (!perf)
+    {
+        addLine(out, std::string("perf: measuring..."), kPerfGraphColour);
+        addLine(out, "api: " + rendererApiLabel(), kPerfGraphColour);
+        return;
+    }
+    const double quarter = perf->frameMs * 0.25;
+    const char* const limit = perf->capWaitMs > quarter                 ? "CAP (game.lockFps)"
+                            : perf->presentMs + perf->fenceMs > quarter ? "GPU"
+                            :                                             "CPU";
+    addLine(out, formatString("fps: %.0f  frame: %.2f ms avg  %.1f max",
+                              perf->fps, perf->frameMs, perf->maxFrameMs), kPerfGraphColour);
+    addLine(out, formatString("cpu: game %.2f  render %.2f  cap-wait %.2f ms",
+                              perf->gameMs, perf->renderMs, perf->capWaitMs), kPerfGraphColour);
+    addLine(out, formatString("gpu: present %.2f  fence %.2f ms  limit: %s",
+                              perf->presentMs, perf->fenceMs, limit), kPerfGraphColour);
+    addLine(out, formatString("draws: %u  prims: %.0fk",
+                              perf->drawCalls, static_cast<double>(perf->primitives) / 1000.0),
+            kPerfGraphColour);
+    addLine(out, "api: " + rendererApiLabel(), kPerfGraphColour);
+}
+
+// openbf2.stats.frame: every main-loop stage and every renderFrame stage, ms per frame, the same
+// figures the frame-timing log gets.
+void addFrameTimingLines(std::vector<OverlayLine>& out)
+{
+    if (!frametiming::hasUser(frametiming::UserFrameTiming))
+        return;
+    addGap(out);
+    const frametiming::Snapshot* const perf = frametiming::snapshot();
+    if (!perf)
+    {
+        addLine(out, std::string("timing: measuring..."), kFrameTimingColour);
+        return;
+    }
+    const double* const s = perf->sectionMs;
+    using namespace frametiming;
+    // One stage per line, "name<TAB>ms(percent of the whole frame)". The block is drawn on the right
+    // side of the screen with the figures right-aligned (drawDiagnosticOverlays).
+    const double frameMs = perf->frameMs > 0.0 ? perf->frameMs : 1.0;
+    struct Row
+    {
+        double frame;
+        std::vector<OverlayLine>* out;
+        void operator()(const char* name, double ms) const
+        {
+            addLine(*out, std::string(name) + "\t" + formatString("%.2f (%.0f%%)", ms, ms * 100.0 / frame),
+                    kFrameTimingColour);
+        }
+    } row = { frameMs, &out };
+    addLine(out, std::string("loop (ms per frame)"), kFrameTimingColour);
+    row("outside", s[SecOutside]);
+    row("setup", s[SecSetup]);
+    row("lockfps", s[SecLockFps]);
+    row("input", s[SecInput]);
+    row("menu", s[SecMenu]);
+    row("snd/hud", s[SecSoundHud]);
+    row("sim", s[SecSimulation]);
+    row("python", s[SecPython]);
+    row("world", s[SecWorld]);
+    row("render", s[SecRender]);
+    row("console", s[SecConsole]);
+    row("end", s[SecFrameEnd]);
+    addLine(out, std::string(), kFrameTimingColour);
+    addLine(out, std::string("render (ms per frame)"), kFrameTimingColour);
+    row("eng", perf->engRenderMs);
+    row("update", s[SecRUpdate]);
+    row("cull", s[SecRCull]);
+    row("shadows", s[SecRShadows]);
+    row("objects", s[SecRObjects]);
+    row("opaque", s[SecROpaque]);
+    row("transp", s[SecRTransparent]);
+    row("1st-person", s[SecRFirstPerson]);
+    row("nametags", s[SecRNametags]);
+    row("hud", s[SecRHudPaint]);
+    row("frame-events", s[SecRFrameEvents]);
+    row("hud-rest", s[SecRHud]);
+    row("present", s[SecPresent]);
+    row("fence", s[SecGpuFence]);
+    // [CHOSEN, not recovered] the client sim (game->update) split; the rows add up to "sim" above.
+    addLine(out, std::string(), kFrameTimingColour);
+    addLine(out, std::string("sim (ms per frame)"), kFrameTimingColour);
+    row("player", s[SecSPlayer]);
+    row("receive", s[SecSReceive]);
+    row("replay", s[SecSReplay]);
+    row("events", s[SecSEvents]);
+    row("objects", s[SecSObjects]);
+    row("physics", s[SecSPhysics]);
+    row("remote", s[SecSRemote]);
+    row("collision", s[SecSCollision]);
+    row("local-pred", s[SecSLocalPred]);
+    row("sound", s[SecSSound]);
+    row("send", s[SecSSend]);
+}
+
+
+// The console font's space is one pixel wide, so spaces cannot line figures up. The net, perf and
+// frame lines are therefore split into cells separated by '\t' and drawn on tab stops (see
+// drawOverlayColumn): cell 0 is the label up to the first ": " (empty for an indented continuation
+// line), and each run of two or more spaces starts the next cell. A single space inside a cell is
+// widened to two pixels.
+std::string tabbedStatsText(const std::string& text)
+{
+    std::string out;
+    std::size_t i = 0;
+    bool labelDone = false;
+    if (i < text.size() && text[i] == ' ')
+    {
+        out += '\t';                                          // continuation line: empty label
+        labelDone = true;
+        while (i < text.size() && text[i] == ' ')
+            ++i;
+    }
+    while (i < text.size())
+    {
+        if (!labelDone && text[i] == ':' && i + 1 < text.size() && text[i + 1] == ' ')
+        {
+            out += ":\t";
+            labelDone = true;
+            i += 2;
+            while (i < text.size() && text[i] == ' ')
+                ++i;
+            continue;
+        }
+        if (text[i] != ' ')
+        {
+            out += text[i++];
+            continue;
+        }
+        std::size_t run = 0;
+        while (i < text.size() && text[i] == ' ')
+        {
+            ++run;
+            ++i;
+        }
+        out += (run >= 2) ? std::string(1, '\t') : std::string("  ");
+    }
+    return out;
+}
+
+// Width in pixels of a string in the console font (Fonts/BF1942.font, the font DebugTextWriter
+// draws with): each glyph's atlas width plus BetweenWidth 1, and SpaceWidth 1 for ' ', which is
+// what Font::Ported::getCharWidth returns. The table is the retail font's ASCII 32..126; any other
+// character counts as 7. BF2.exe cannot ask the writer for a width, and the stats lines are padded
+// with these widths into single strings, so they must match the font exactly.
+int estimateTextWidth(const std::string& text)
+{
+    static const unsigned char kGlyphAdvance[95] = {
+        1, 3, 5, 7, 7, 9, 8, 3, 5, 5, 5, 7, 4, 6, 3, 6,
+        7, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 4, 5, 7, 5, 7,
+        9, 7, 7, 7, 7, 7, 7, 7, 7, 3, 7, 7, 6, 9, 7, 7,
+        7, 7, 7, 7, 7, 7, 7, 9, 7, 7, 7, 4, 6, 4, 7, 8,
+        4, 6, 6, 6, 6, 6, 4, 6, 6, 3, 4, 6, 3, 9, 6, 6,
+        6, 6, 5, 5, 5, 6, 6, 9, 6, 6, 6, 5, 3, 5, 6 };
+    int width = 0;
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        width += (c >= 32 && c <= 126) ? kGlyphAdvance[c - 32] : 7;
+    }
+    return width;
+}
+
+void splitCells(const std::string& text, std::vector<std::string>& cells)
+{
+    cells.clear();
+    std::string::size_type start = 0;
+    for (;;)
+    {
+        const std::string::size_type tab = text.find('\t', start);
+        cells.push_back(text.substr(start, tab == std::string::npos ? std::string::npos : tab - start));
+        if (tab == std::string::npos)
+            break;
+        start = tab + 1;
+    }
+}
+
+// openbf2.stats.audio: the Sound.showStats text (collectSoundStatsLines in Sound/BfSound.cpp).
+void addAudioStatsLines(std::vector<OverlayLine>& out)
+{
+    if (g_audioStatsOverlayMode != 1)
+        return;
+    std::vector<std::string> text;
+    collectSoundStatsLines(text);
+    for (std::size_t i = 0; i < text.size(); ++i)
+        addLine(out, text[i], kAudioStatsColour);
+}
+
+// Queues one string with a drop shadow: the writer has no outline mode and draws its queue in order,
+// so the text goes in black one pixel down and right first and then in its colour on top. Each
+// queued string costs a font draw every frame, so the shadow (two draws) replaced an eight-neighbour
+// outline (nine draws) that made the overlay itself the largest render cost.
+// shadow false queues the text alone.
+void drawOutlined(IOverlayTextWriter* writer, int x, int y,
+                  unsigned int colour, const std::string& text, bool shadow)
+{
+    if (shadow)
+        writer->queueTextColoured(x + 1, y + 1, kOverlayOutlineColour, text, 0);
+    writer->queueTextColoured(x, y, colour, text, 0);
+}
+
+// Lays out one column of blocks, queues it on the writer and returns its width in pixels.
+// Tabbed stats lines share tab stops within their block: the label cell is left-aligned, every
+// figure cell is right-aligned on its stop, and a "|" sits between two figure cells, so the same
+// column lines up on every line of the block.
+int drawOverlayColumn(IOverlayTextWriter* writer, int x, int height,
+                      bool draw, bool middle,
+                      const std::vector<OverlayLine>& lines)
+{
+    const int kLabelGap = 12;                                 // label to the first figure
+    const int kCellGap  = 24;                                 // figure to figure, "|" in the middle
+
+    // Tab stops per block: the widest cell of each column.
+    std::map<int, std::vector<int> > widths;
+    std::vector<std::string> cells;
+    int columnWidth = 0;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        if (lines[i].group < 0 || lines[i].text.find('\t') == std::string::npos)
+        {
+            columnWidth = (std::max)(columnWidth, estimateTextWidth(lines[i].text));
+            continue;
+        }
+        splitCells(lines[i].text, cells);
+        std::vector<int>& w = widths[lines[i].group];
+        if (w.size() < cells.size())
+            w.resize(cells.size(), 0);
+        for (std::size_t c = 0; c < cells.size(); ++c)
+            w[c] = (std::max)(w[c], estimateTextWidth(cells[c]));
+    }
+    std::map<int, std::vector<int> > stops;                   // right edge of each figure cell
+    for (std::map<int, std::vector<int> >::const_iterator it = widths.begin(); it != widths.end(); ++it)
+    {
+        std::vector<int>& s = stops[it->first];
+        s.resize(it->second.size(), 0);
+        int edge = it->second.empty() ? 0 : it->second[0] + kLabelGap;
+        for (std::size_t c = 1; c < it->second.size(); ++c)
+        {
+            edge += it->second[c];
+            s[c] = edge;
+            edge += kCellGap;
+        }
+        if (!s.empty())
+            columnWidth = (std::max)(columnWidth, s.back());
+    }
+
+    if (!draw)
+        return columnWidth;
+
+    // Centred on three quarters of the window height (clear of the kill feed and the HUD corners),
+    // or on half of it for the right-hand column (clear of the minimap and the weapon panel),
+    // pushed up to clear the bottom HUD and kept below the renderer.drawFps line (left) or the
+    // minimap (right) at the top.
+    const int blockHeight = static_cast<int>(lines.size()) * kNetGraphLineSpacing;
+    int top = (middle ? height / 2 : height * 3 / 4) - blockHeight / 2;
+    const int bottomMargin = overlayBottomMargin(height);
+    if (top + blockHeight > height - bottomMargin)
+        top = height - bottomMargin - blockHeight;
+    // The right-hand column starts below the minimap, which reaches about a third of the height.
+    const int minTop = middle ? height / 3 : kOverlayTopMargin;
+    if (top < minTop)
+        top = minTop;
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        if (lines[i].text.empty())
+            continue;
+        const int y = top + static_cast<int>(i) * kNetGraphLineSpacing;
+        // The frame block (group 3) is drawn without the shadow, which halves its cost.
+        const bool shadow = lines[i].group != 3;
+        if (lines[i].group < 0 || lines[i].text.find('\t') == std::string::npos)
+        {
+            drawOutlined(writer, x, y, lines[i].colour, lines[i].text, shadow);
+            continue;
+        }
+        // Each font draw is a draw call, so a tabbed line is padded with one-pixel spaces into a
+        // single string: the label, then each figure ending on its stop, with a "|" half way between
+        // two figures. estimateTextWidth uses the font's own advances, so the stops hold exactly.
+        splitCells(lines[i].text, cells);
+        const std::vector<int>& s = stops[lines[i].group];
+        std::string composed = cells[0];
+        int pen = estimateTextWidth(cells[0]);
+        for (std::size_t c = 1; c < cells.size() && c < s.size(); ++c)
+        {
+            if (c >= 2)
+            {
+                const int bar = s[c - 1] + kCellGap / 2 - 1;
+                if (bar > pen)
+                {
+                    composed.append(static_cast<std::size_t>(bar - pen), ' ');
+                    pen = bar;
+                }
+                composed += '|';
+                pen += estimateTextWidth("|");
+            }
+            const int start = s[c] - estimateTextWidth(cells[c]);
+            if (start > pen)
+            {
+                composed.append(static_cast<std::size_t>(start - pen), ' ');
+                pen = start;
+            }
+            composed += cells[c];
+            pen += estimateTextWidth(cells[c]);
+        }
+        drawOutlined(writer, x, y, lines[i].colour, composed, shadow);
+    }
+    return columnWidth;
+}
+
+} // namespace
+
+void drawDiagnosticOverlays()
+{
+    // Left side, in a fixed order: net, perf, audio. Right side: frame.
+    std::vector<std::vector<OverlayLine> > blocks(4);
+    addNetGraphLines(blocks[0]);
+    addPerfGraphLines(blocks[1]);
+    addAudioStatsLines(blocks[2]);
+    std::vector<OverlayLine> frame;
+    addFrameTimingLines(frame);
+    for (std::size_t b = 0; b < 2; ++b)                       // net, perf: tab stops
+        for (std::size_t i = 0; i < blocks[b].size(); ++i)
+        {
+            blocks[b][i].text  = tabbedStatsText(blocks[b][i].text);
+            blocks[b][i].group = static_cast<int>(b);
+        }
+    for (std::size_t i = 0; i < frame.size(); ++i)            // frame: "name<TAB>figure" already
+        frame[i].group = 3;
+    if (!frame.empty() && frame[0].text.empty())
+        frame.erase(frame.begin());                           // its own leading gap
+    bool any = !frame.empty();
+    for (std::size_t b = 0; b < blocks.size(); ++b)
+        any = any || !blocks[b].empty();
+    if (!any)
+        return;
+
+    IOverlayTextWriter* const writer = static_cast<IOverlayTextWriter*>(
+        classManager->getSingleton(std::string("DebugTextWriter")));
+    if (!writer)
+        return;
+    const BF2Window* const window = bf2Engine->getWindow();
+    const int height = window ? window->getHeight() : 0;
+    const int width  = window ? window->getWidth() : 0;
+    const int maxRows = (height - kOverlayTopMargin - overlayBottomMargin(height)) / kNetGraphLineSpacing;
+
+    // Left side: blocks fill a column at the left edge with one empty line between them. A block
+    // that would not fit under the ones already there starts a new column to the right, so any
+    // combination stays on screen without overlap; a block is never split.
+    std::vector<OverlayLine> column;
+    int x = kNetGraphX;
+    for (std::size_t b = 0; b < blocks.size(); ++b)
+    {
+        std::vector<OverlayLine>& block = blocks[b];
+        if (!block.empty() && block[0].text.empty())
+            block.erase(block.begin());                       // the add* functions' own gap
+        if (block.empty())
+            continue;
+        const int needed = static_cast<int>(column.size() + (column.empty() ? 0 : 1) + block.size());
+        if (!column.empty() && needed > maxRows)
+        {
+            x += drawOverlayColumn(writer, x, height, true, false, column)
+               + kOverlayColumnGap;
+            column.clear();
+        }
+        if (!column.empty())
+            addLine(column, std::string(), 0);
+        column.insert(column.end(), block.begin(), block.end());
+    }
+    if (!column.empty())
+        drawOverlayColumn(writer, x, height, true, false, column);
+
+    // Right side: stats.frame, one stage per line, its right edge at the window's right edge so the
+    // figures line up from the right.
+    if (!frame.empty())
+    {
+        const int frameWidth = drawOverlayColumn(writer, 0, height, false, true, frame);
+        drawOverlayColumn(writer, width - kNetGraphX - frameWidth, height, true, true,
+                          frame);
     }
 }
 

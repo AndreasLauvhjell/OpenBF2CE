@@ -6,11 +6,14 @@
 #include "HudColors.h"
 #include "Ref2System.h"
 #include "../Core/StringUtil.h"
+#include "../IO/Console/Console.h"                   // openbf2.console.* line tags [CHOSEN, not recovered]
 #include "../Core/SmartPtr.h"
 #include "../External/BFMeme/TypeDescriptor.h"
 #include "../Scene/Object/PlayerManager.h"
 #include "../Game/Objects/IPlayer.h"
 #include <new>
+#include <map>                                          // openbf2.console.* row categories
+#include <vector>
 namespace dice { namespace hfe { extern hud::BF2HudManager* hudManager; } }
 namespace dice { namespace hfe { namespace hud {
 namespace {
@@ -23,14 +26,90 @@ meme::System* castChatSystem(meme::System* system)
         if (type == required) return system;
     return nullptr;
 }
+
+// [CHOSEN, not recovered] openbf2.console.* filter state. Each HUD row remembers the category of
+// the message written into it, so the console copy made when the row leaves (dropRow,
+// clearMessages) is tagged with it and the console can hide it, also later. Rows are tracked per
+// HudChat instance, outside the class.
+const unsigned char kNoCategory = 0xFF;
+bool          g_consoleChatShown[ConsoleChatCategoryCount] = { true, true, true, true, true };
+bool          g_consoleChatMute  = false;
+unsigned char g_pendingCategory   = kNoCategory;   // set by appendMessage for the rows it writes
+std::map<const HudChat*, std::vector<unsigned char> > g_rowCategories;
+
+std::vector<unsigned char>& rowCategories(const HudChat* chat) { return g_rowCategories[chat]; }
+
+void setRowCategory(const HudChat* chat, int row, unsigned char category)
+{
+    if (row < 0) return;
+    std::vector<unsigned char>& rows = rowCategories(chat);
+    if (rows.size() <= static_cast<std::size_t>(row)) rows.resize(row + 1, kNoCategory);
+    rows[row] = category;
 }
+
+unsigned char rowCategory(const HudChat* chat, int row)
+{
+    const std::vector<unsigned char>& rows = rowCategories(chat);
+    return (row >= 0 && static_cast<std::size_t>(row) < rows.size()) ? rows[row] : kNoCategory;
+}
+
+// The category of a message from appendMessage's colour kind and history block.
+unsigned char categoryFor(int kind, int historyKind)
+{
+    switch (kind) {
+    case 0: case 3: return historyKind == 0 ? ConsoleChatChat : ConsoleChatKills;
+    case 6: return ConsoleChatEvents;
+    case 4: return ConsoleChatRadio;
+    case 5: case 7: case 8: return ConsoleChatPersonal;
+    }
+    return kNoCategory;
+}
+
+// The console's line filter: hides a tagged line while mute is on or its category is off.
+bool consoleChatLineHidden(unsigned char category)
+{
+    if (category >= ConsoleChatCategoryCount) return false;
+    return g_consoleChatMute || !g_consoleChatShown[category];
+}
+
+// Installs the filter in the console before any chat line can reach it.
+struct InstallConsoleChatFilter
+{
+    InstallConsoleChatFilter() { io::setOutputLineFilter(&consoleChatLineHidden); }
+} g_installConsoleChatFilter;
+
+// Copies a leaving row into the console tagged with the row's category, so the console can hide it
+// now or later. The copy itself always happens, as in retail.
+void outputRow(const HudChat* chat, int row, const std::string& text)
+{
+    io::setOutputTag(rowCategory(chat, row));
+    hudManager->outputChatMessage(text);
+    io::setOutputTag(io::kNoOutputTag);
+}
+}
+
+bool getConsoleChatCategory(ConsoleChatCategory category)
+{
+    return category >= 0 && category < ConsoleChatCategoryCount && g_consoleChatShown[category];
+}
+void setConsoleChatCategory(ConsoleChatCategory category, bool shown)
+{
+    if (category >= 0 && category < ConsoleChatCategoryCount) g_consoleChatShown[category] = shown;
+}
+bool getConsoleChatMute() { return g_consoleChatMute; }
+void setConsoleChatMute(bool mute) { g_consoleChatMute = mute; }
+
 HudChat::HudChat(meme::System* system) : m_system(system), m_data(nullptr), m_field3bc(), m_historyOutput(true)
 {
     for (meme::Color& color : m_field008) color = {1,1,1,1};
     for (auto& variant : m_colors) for (meme::Color& color : variant) color = {1,1,1,1};
     for (int i = 0; i < 9; ++i) { m_capacity[i] = 0; m_spacing[i] = 0; m_duration[i] = 5; }
 }
-HudChat::~HudChat() { if (m_data) delete m_data; }
+HudChat::~HudChat()
+{
+    if (m_data) delete m_data;
+    g_rowCategories.erase(this);   // [CHOSEN, not recovered] openbf2.console.* row tags
+}
 bool HudChat::init(std::string name, int firstWidth, int secondWidth)
 {
     void* allocation = ::operator new(sizeof(meme::BfListBoxData));
@@ -209,9 +288,14 @@ void HudChat::restoreColors(int kind)
             defaultChatColors[variant].b, defaultChatColors[variant].a);
 }
 void HudChat::appendMessage(std::wstring text, int kind, int team, int first,
-    int* count, int capacity, float*, int, world::IPlayer* player)
+    int* count, int capacity, float*, int historyKind, world::IPlayer* player)
 {
     if (text.empty()) return;
+    // [CHOSEN, not recovered] Tag the rows this message writes for the openbf2.console.* filter.
+    struct PendingCategory {
+        PendingCategory(unsigned char c) { g_pendingCategory = c; }
+        ~PendingCategory() { g_pendingCategory = kNoCategory; }
+    } pending(categoryFor(kind, historyKind));
     std::string path;
     SmartPtr<IBase> unusedResource; // 66E7D0/6ACD10, never populated in this body
     const int row = nextRow(first, count, capacity);
@@ -259,6 +343,7 @@ void HudChat::wrapMessage(int kind, std::wstring text, int team, int first,
     const meme::Color* color = &m_colors[variant][kind];
     if (text.size() <= static_cast<unsigned int>(fitting)) {
         m_data->setWideCell0x7c87f0(1, row, text, color->r,color->g,color->b,color->a, 0,0);
+        setRowCategory(this, row, g_pendingCategory); // [CHOSEN, not recovered] openbf2.console.* filter
         ++*count;
         return;
     }
@@ -285,6 +370,7 @@ void HudChat::wrapMessage(int kind, std::wstring text, int team, int first,
         }
         m_data->setWideCell0x7c87f0(1, row, text.substr(offset, consumed),
             color->r,color->g,color->b,color->a, 0, firstLine ? 0 : previousMode);
+        setRowCategory(this, row, g_pendingCategory); // [CHOSEN, not recovered] openbf2.console.* filter
         offset += consumed;
         firstLine = false; previousMode = nextMode;
         if (skipSpace) ++offset;
@@ -297,20 +383,22 @@ int HudChat::nextRow(int first, int* count, int capacity)
     if (saved >= capacity) { dropRow(first, count); return first + saved - 1; }
     return first + saved;
 }
-void HudChat::resetRows() { m_data->clearRows(); rebuildRows(); }
+void HudChat::resetRows() { m_data->clearRows(); rowCategories(this).clear(); rebuildRows(); }   // tags: [CHOSEN, not recovered]
 void HudChat::dropRow(int first, int* count)
 {
     std::wstring wide = m_data->getWideCell(1, first);
     std::string text = hudManager->toNarrowString(wide);
-    if (!text.empty() && m_historyOutput) hudManager->outputChatMessage(text);
+    if (!text.empty() && m_historyOutput) outputRow(this, first, text);
     const int saved = *count;
     if (saved) {
-        if (saved == 1) m_data->clearRow(first);
+        if (saved == 1) { m_data->clearRow(first); setRowCategory(this, first, kNoCategory); }
         else for (int row = first; row < first + *count - 1; ++row) {
             std::wstring rowWide = m_data->getWideCell(1, row);
             std::string rowText = hudManager->toNarrowString(rowWide);
-            if (!rowText.empty() && row != first && m_historyOutput) hudManager->outputChatMessage(rowText);
+            if (!rowText.empty() && row != first && m_historyOutput)
+                outputRow(this, row, rowText);
             m_data->moveRow(row + 1, row);
+            setRowCategory(this, row, rowCategory(this, row + 1));   // the tag moves with the row
         }
         --*count;
     }
@@ -351,8 +439,9 @@ void HudChat::clearMessages()
     for (int row = 0; row < m_data->getRowCount(); ++row) {
         std::wstring wide = m_data->getWideCell(1, row);
         std::string text = hudManager->toNarrowString(wide);
-        if (!text.empty() && m_historyOutput) hudManager->outputChatMessage(text);
+        if (!text.empty() && m_historyOutput) outputRow(this, row, text);
         m_data->clearRow(row);
+        setRowCategory(this, row, kNoCategory);   // [CHOSEN, not recovered] openbf2.console.* filter
     }
     for (int i = 0; i < 9; ++i) m_count[i] = 0;
     for (int i = 0; i < 9; ++i) m_remaining[i] = 0;

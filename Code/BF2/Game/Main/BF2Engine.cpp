@@ -100,6 +100,7 @@
 #include "BF2ClientSeams.h"                 // [FRONTIER] client collaborators without recovered classes
 #include "../../AI/AIInterface/AIInstance.h"   // ai::g_aiInstance, IAIInstance (ds:0xA33C08 in the client)
 #include "../LocalProfileManager.h"        // native client startup interface
+#include "../GameClient/GameClient.h"      // drawDiagnosticOverlays - the openbf2.* overlays
 #include "../ProfileManager.h"             // renderMenu case 14 clears the pending transition
 #include "../../Menu/BF2HudManager.h"       // constructor and established virtual prefix; publication gated
 #if !DEDICATED
@@ -129,6 +130,7 @@
 #include <cstdio>
 #include <map>
 #endif
+#include "../../Core/FrameTiming.h"        // [CHOSEN, not recovered] optional frame timing (BF2_FRAME_TIMING)
 
 // Middleware attribution functions have global scope. Preserve their startup call order.
 void openAlCreditNotice();
@@ -2105,6 +2107,7 @@ bool BF2Engine::mainLoop()
     // Runs one frame per call. A pending quit returns false before any frame work.
     if (quitNextFrameFlag)
         return false;
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecOutside);   // [CHOSEN, not recovered] frame timing
 #if defined(__APPLE__) && !DEDICATED
     frametrace::begin();                                            // [TEMP] BF2_FRAME_TRACE
     bf2warmup::tick();                                              // [CHOSEN] +warmupLevel: progress / exit
@@ -2152,6 +2155,7 @@ bool BF2Engine::mainLoop()
 
     // : begin this frame's demo work. Args this->bf2Render (+0x18), this->bf2Console (+0x14).
     demo->beginMainLoop(bf2Render, bf2Console);
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecSetup);   // [CHOSEN, not recovered] frame timing
 
     // demo overrides engine timing before it is computed (0x8137341 / 0x8137380 / 0x8137445)
     double preferredFrameTime =
@@ -2173,6 +2177,7 @@ bool BF2Engine::mainLoop()
         while (target > wallNow)                                    //  (jbe exits)
             wallNow = g_system->getWallClockTime();                 //  vcall +0x1C
     }
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecLockFps);   // [CHOSEN, not recovered] frame timing
 
     // mainLoopDeltaTime (+0x34), 0x81373F0-0x8137428. Same clamp as frameTime below, but fed by
     // the wall clock rather than the exact/simulation clock.
@@ -2247,6 +2252,8 @@ bool BF2Engine::mainLoop()
             checkMovie();                                           //  on the client
     }
 
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecInput);   // [CHOSEN, not recovered] frame timing
+
 #if !DEDICATED
     // THE menu / movie ARM - BF2.exe 0x40CA80, never in a dedicated image
     if (menuActive && !menuLogic && s_activateMenuOnFrame1)
@@ -2318,6 +2325,7 @@ bool BF2Engine::mainLoop()
         }
     }
 
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecMenu);   // [CHOSEN, not recovered] frame timing
 #if !DEDICATED
     // BF2.exe 0x40CFF9..0x40D017: the voice client's frame (+0x9C) on a client with a game.
     if (!isDedicated() && bf2VoipClient && game)
@@ -2346,6 +2354,8 @@ bool BF2Engine::mainLoop()
 #endif
 
 
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecSoundHud);   // [CHOSEN, not recovered] frame timing
+
     // Step simulation only with ticks and both game owners present; use the
     // simulation-rate sample already taken for this frame.
     BF2_FRAME_MARK(Pre);                                            // [TEMP] BF2_FRAME_TRACE
@@ -2363,6 +2373,8 @@ bool BF2Engine::mainLoop()
         }
     }
 
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecSimulation);   // [CHOSEN, not recovered] frame timing
+
     // Python updates require render ticks and an initialized host, independent of
     // game presence and simulation rate.
     BF2_FRAME_MARK(Update);                                         // [TEMP] BF2_FRAME_TRACE
@@ -2371,6 +2383,8 @@ bool BF2Engine::mainLoop()
         if (python::pythonHost()->isInitialized())
             python::pythonHost()->update();
     }
+
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecPython);   // [CHOSEN, not recovered] frame timing
 
     // Keep the unconditional player lookup even in dedicated images, which discard
     // its null result. playerManager must already exist.
@@ -2427,6 +2441,7 @@ bool BF2Engine::mainLoop()
         }
     }
 
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecWorld);   // [CHOSEN, not recovered] frame timing
     BF2_FRAME_MARK(Objects);                                        // [TEMP] BF2_FRAME_TRACE
 #if !DEDICATED
     // THE frame - BF2.exe 0x40CA80. Never in a dedicated image: isDedicated() gates it and every
@@ -2458,6 +2473,8 @@ bool BF2Engine::mainLoop()
         // BF2.exe 0x40D3B5: `mov ecx, [esi+18h]; mov eax, [ecx]; call [eax+1Ch]` on this->bf2Render.
         bf2Render->beforeFrame();                                   // vslot +0x1C, 0x4530A0
         rendered = true;
+        // [CHOSEN, not recovered] Queue the openbf2.stats.net / .perf / .frame overlays for this rendered frame.
+        drawDiagnosticOverlays();
         // ..0x40D3D7: the demo's +0x08 recorder and the widened frame time, then +0x18.
         bf2Render->render(frameTime, demo->recorder());             // vslot +0x18, 0x453270 [FRONTIER] body
         if (game)
@@ -2471,6 +2488,7 @@ bool BF2Engine::mainLoop()
         bf2Render->update(frameTime);                               // vslot +0x14, 0x4530D0
 #endif
 
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecRender);   // [CHOSEN, not recovered] frame timing
     BF2_FRAME_MARK(Render);                                         // [TEMP] BF2_FRAME_TRACE
     bf2Console->updateConsole();
 #if !DEDICATED
@@ -2492,6 +2510,8 @@ bool BF2Engine::mainLoop()
         ((DebugCounterManager*)debugCounterManager)->update();      // vtable +0x14
 
     updateStatusMonitor(false);
+
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecConsole);   // [CHOSEN, not recovered] frame timing
 
     // Limit dedicated frames to 30 Hz using time since frame entry. Each sleep-loop
     // iteration subtracts overhead again; a backward clock ends the wait.
@@ -2549,6 +2569,8 @@ bool BF2Engine::mainLoop()
         if (game->queryInterface(IID_IGameServer))
             PbServerProcessEvents();
     }
+    ::dice::hfe::frametiming::lap(::dice::hfe::frametiming::SecFrameEnd);   // [CHOSEN, not recovered] frame timing
+    ::dice::hfe::frametiming::endFrame();                                // [CHOSEN, not recovered] frame timing
     // A queued quit makes this the final frame.
     return !quitNextFrameFlag;
 }

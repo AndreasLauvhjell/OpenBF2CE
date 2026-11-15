@@ -88,10 +88,12 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <new>
 #include <math.h>
 #include <stddef.h>
+#include "../Core/FrameTiming.h"         // [CHOSEN, not recovered] optional frame timing (BF2_FRAME_TIMING)
 
 namespace dice {
 namespace hfe {
@@ -2317,6 +2319,8 @@ bool Renderer::renderFrame(double time, float deltaTime)
 {
     float          timeF = static_cast<float>(time);   // zeroed with `time` by the panorama arm
 
+    ::dice::hfe::frametiming::renderBegin();   // [CHOSEN, not recovered] frame timing
+
     // BF2Render.cpp:991 - the state-manager sanity check.
     if (!stateManagerIsFullyRestored())
     {
@@ -2426,6 +2430,8 @@ bool Renderer::renderFrame(double time, float deltaTime)
                 hostCalls::windUpdate(wind, timeF);                                    // +0x10
         }
 
+        ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRUpdate);   // [CHOSEN, not recovered] frame timing
+
         // The fog block: save the host ObjectManager's fog triple, swap in the renderer's
         // override, run the ObjectDrawer, restore. The drawer is withheld; the host fog churn is
         // the shipped behaviour and runs.
@@ -2456,6 +2462,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
             reinterpret_cast<SetF>((*omv)[50])(om, fogB);
             reinterpret_cast<SetF>((*omv)[46])(om, fogC);
         }
+        ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRCull);   // [CHOSEN, not recovered] frame timing
 
         if (sw(1714))
         {
@@ -2504,6 +2511,8 @@ bool Renderer::renderFrame(double time, float deltaTime)
             postProductionPrepare();
         }
 
+        ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRUpdate);   // [CHOSEN, not recovered] frame timing
+
         if (beginScene(0, 0))
         {
             // PE 0x1002FE52 passes XpLightManager.cpp's coordinator at 0x10259B20, not the
@@ -2518,6 +2527,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
             }
             else
                 noteOnce(64u, "LightManager (shadow-map pass + light constants)");
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRShadows);   // [CHOSEN, not recovered] frame timing
 
             // sub_100057E0(7, 0, 1.0f, 0, 0, 0) - the frame clear: RT flush + Clear ALL, black.
             flushRenderTargetsSeam();
@@ -2600,6 +2610,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
                 reinterpret_cast<TimeFn>((*reinterpret_cast<void***>(m_objectDrawer))[6])(
                     m_objectDrawer, timeF);
             }
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRObjects);   // [CHOSEN, not recovered] frame timing
 
             renderQueueFlush(0x30, 1);                       // RSMTZOnly
 
@@ -2720,6 +2731,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
                     noteOnce(128u, "SkyDome (draw pass)");
             }
 
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecROpaque);   // [CHOSEN, not recovered] frame timing
             renderQueueFlush(0x3C, 1);                       // RSMTFogPass
 
             if (sw(1693) && isCameraUnderWater())
@@ -2772,6 +2784,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
                 reinterpret_cast<SkyFn>((*reinterpret_cast<void***>(geom::g_SkyDome))[42])(
                     geom::g_SkyDome, 1);
             }
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRTransparent);   // [CHOSEN, not recovered] frame timing
             if (sw(1717) && g_PostProductionFrameWorkOwner
                 && (!m_postProductionNeedsActive || postProductionActive()))
             {
@@ -2825,6 +2838,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
                 QueueProfiler::end();
             }
 
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRFirstPerson);   // [CHOSEN, not recovered] frame timing
             if (sw(1704))
             {
                 void* nametags = classManager
@@ -2835,6 +2849,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
                     reinterpret_cast<Fn>((*static_cast<void***>(nametags))[6])(nametags);
                 }
             }
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRNametags);   // [CHOSEN, not recovered] frame timing
 
             // PE 0x100307EA..0x10030806: sky pass 2 follows the nametags. The shipped call does
             // not null-test the SkyDome global; this function guards it like its other sky calls.
@@ -2847,6 +2862,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
 
             if (sw(1713) && m_hudManager)
                 hostCalls::hudPaint(m_hudManager);                                     // +0x1C
+            ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRHudPaint);   // [CHOSEN, not recovered] frame timing
 
             if (m_byte6DD)                                                             // +0x6DD
                 rendererDrawOverlayTexture(this);                                      // sub_10028FD0
@@ -2894,6 +2910,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
                     ECCore, 5, static_cast<void*>(0), 0.0f);
                 ::dice::hfe::eventManager->postEvent(
                     static_cast<EventCategory>(4), 6000, static_cast<void*>(0), 0.0f);
+                ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRFrameEvents);   // [CHOSEN, not recovered] frame timing
 
                 // PE 0x1003091B..0x10030990: with the DebugRenderer singleton (dword_10247C3C)
                 // published, an initialized "AI" singleton gets the AI debug-draw event
@@ -2995,8 +3012,10 @@ bool Renderer::renderFrame(double time, float deltaTime)
                 movie->captureFrame();                                            // sub_10003510
         }
 
+        ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRHud);   // [CHOSEN, not recovered] frame timing
         if (presentGate != 0.0)
             present(2);
+        ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecPresent);   // [CHOSEN, not recovered] frame timing
     }
 
     if (movie)
@@ -3013,6 +3032,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
             queryWaitDone(m_frameFences[(cursor - count) % count]);
         }
     }
+    ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecGpuFence);   // [CHOSEN, not recovered] frame timing
 
     geometryStreamTick();
 
@@ -3021,6 +3041,7 @@ bool Renderer::renderFrame(double time, float deltaTime)
     // +0x2C restoreFPUExceptions, then +0x18 getWallClockTime (typed, RW-266).
     hostCalls::systemFrameEnd();
     m_frameWallTime = hostCalls::systemWallClockTime() - m_frameStartTime;
+    ::dice::hfe::frametiming::renderLap(::dice::hfe::frametiming::SecRUpdate);   // [CHOSEN, not recovered] frame timing
     return true;
 }
 
@@ -5862,6 +5883,8 @@ namespace geom {
 // objects initializeFontAndConsoleOverlay created (held here as IBase*, as createInstance returned).
 int  fontPortedGetHeight(IBase* font);                                            // Font::Ported +0x1C
 void fontPortedDrawText(IBase* font, float x, float y, const std::string& text);  // Font::Ported +0x18
+void fontPortedSetColour(IBase* font, unsigned colour);                            // Font::Ported +0x30
+int  fontPortedGetTextWidth(IBase* font, const std::string& text);               // Font::Ported +0x24
 void overlayTextureSetSize(IBase* overlay, const Vec2& size);                      // OverlayTexture +0x18
 void overlayTextureDraw(IBase* overlay);                                           // OverlayTexture +0x10
 } // namespace geom
@@ -5904,13 +5927,61 @@ void Renderer::slot_0x58()
                            static_cast<double>(consoleHeight));
     }
 
+    // [CHOSEN, not recovered] A line starting with one of the console's colour markers (added by
+    // OldConsole::getLines) is drawn without the marker in that colour, then the font's own colour
+    // is restored: '\x01' errors (refusals, unknown commands, syntax errors) in red, '\x03' Tab
+    // completion suggestions in teal, '\x04' a command's answer (a property read) in blue. Retail
+    // draws every line alike.
+    const unsigned int consoleColour = geom::fontPortedGetColour(font);
+    const unsigned int kErrorColour      = 0xFFFF5050u;   // light red, argb
+    const unsigned int kSuggestionColour = 0xFF00A08Cu;   // teal
+    const unsigned int kValueColour      = 0xFF2878DCu;   // info blue
+    const unsigned int kCaretColour  = 0xFF0040FFu;   // strong blue: the edit cursor (the console background is near white)
+    struct LineColour
+    {
+        static unsigned int of(char marker, unsigned int error, unsigned int suggestion,
+                               unsigned int value)
+        {
+            return marker == '\x01' ? error : marker == '\x03' ? suggestion
+                 : marker == '\x04' ? value : 0u;
+        }
+    };
     int line = 0;
     for (std::vector<std::string>::const_iterator it = lines.begin(); it != lines.end();
          ++it, ++line)
     {
         const std::string text = ::renddx9abi::fromHostString(*it);
+        const unsigned int lineColour = text.empty() ? 0u
+            : LineColour::of(text[0], kErrorColour, kSuggestionColour, kValueColour);
+        const bool isMarked = lineColour != 0u;
+        const std::string plain = isMarked ? text.substr(1) : text;
         const int height = geom::fontPortedGetHeight(font);                    // re-read per line
-        geom::fontPortedDrawText(font, 2.0f, static_cast<float>((height + 1) * line + 2), text);
+        const float y = static_cast<float>((height + 1) * line + 2);
+        if (isMarked)
+            geom::fontPortedSetColour(font, lineColour);
+        // [CHOSEN, not recovered] A '\x02' in the prompt line is the edit cursor (OldConsole::getLines):
+        // the text either side is drawn with a small gap and a caret in its own colour blinks there.
+        const std::string::size_type caret = plain.find('\x02');
+        if (caret == std::string::npos)
+            geom::fontPortedDrawText(font, 2.0f, y, plain);
+        else
+        {
+            const std::string before = plain.substr(0, caret);
+            const std::string after  = plain.substr(caret + 1);
+            const int caretX = 2 + geom::fontPortedGetTextWidth(font, before) + 1;
+            geom::fontPortedDrawText(font, 2.0f, y, before);
+            geom::fontPortedDrawText(font, static_cast<float>(caretX + 4), y, after);
+            if ((std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now().time_since_epoch()).count() / 400) % 2 == 0)   // on 400 ms, off 400 ms
+            {
+                geom::fontPortedSetColour(font, kCaretColour);
+                geom::fontPortedDrawText(font, static_cast<float>(caretX), y, std::string("|"));
+                geom::fontPortedDrawText(font, static_cast<float>(caretX + 1), y, std::string("|"));   // doubled: thicker
+                geom::fontPortedSetColour(font, isMarked ? lineColour : consoleColour);
+            }
+        }
+        if (isMarked)
+            geom::fontPortedSetColour(font, consoleColour);
     }
 
     statsSwapEnabled(statsWere);

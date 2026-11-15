@@ -22,6 +22,7 @@ extern "C" int __cdecl _purecall();
 #else
 extern "C" void __cxa_pure_virtual();
 #endif
+#include "../Core/FrameTiming.h"         // [CHOSEN, not recovered] optional frame timing (BF2_FRAME_TIMING)
 
 namespace dice {
 namespace hfe {
@@ -1439,6 +1440,7 @@ void rendererDrawPrimitive(unsigned int primCount, unsigned int type, unsigned i
         return;
     preDrawApply(sm());
     rendererDevice()->DrawPrimitive(static_cast<D3DPRIMITIVETYPE>(type), startVertex, primCount);
+    ::dice::hfe::frametiming::countDraw(primCount);     // [CHOSEN, not recovered]
     unsigned char* stats = static_cast<RendDX9Base*>(g_rendererBase)->renderStats;
     if (stats[644])
     {
@@ -1460,6 +1462,7 @@ void rendererDrawIndexedPrimitive(unsigned int primCount, unsigned int type, int
     preDrawApply(sm());
     rendererDevice()->DrawIndexedPrimitive(static_cast<D3DPRIMITIVETYPE>(type), baseVertex,
                                            minIndex, numVertices, startIndex, primCount);
+    ::dice::hfe::frametiming::countDraw(primCount);     // [CHOSEN, not recovered]
     unsigned char* stats = static_cast<RendDX9Base*>(g_rendererBase)->renderStats;
     if (stats[644])
     {
@@ -1483,6 +1486,7 @@ void rendererDrawPrimitiveUP(unsigned int primCount, const void* data,
     preDrawApply(sm());
     rendererDevice()->DrawPrimitiveUP(static_cast<D3DPRIMITIVETYPE>(type), primCount, data,
                                       stride);
+    ::dice::hfe::frametiming::countDraw(primCount);     // [CHOSEN, not recovered]
     unsigned char* stats = static_cast<RendDX9Base*>(g_rendererBase)->renderStats;
     if (stats[644])
     {

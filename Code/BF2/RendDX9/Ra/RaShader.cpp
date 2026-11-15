@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../Core/FrameTiming.h"      // [CHOSEN, not recovered] optional frame timing (BF2_FRAME_TIMING)
 
 namespace dice {
 namespace hfe {
@@ -1343,6 +1344,7 @@ void RaShader::draw(RenderQueueEntry* entry)
                                    static_cast<UINT>(minIndex), static_cast<UINT>(numVertices),
                                    static_cast<UINT>(startIndex),
                                    static_cast<UINT>(primitiveCount));   // device +0x148
+    ::dice::hfe::frametiming::countDraw(static_cast<unsigned int>(primitiveCount));   // [CHOSEN, not recovered]
 }
 
 // sub_1004AFD0, read in full. GetParameterByName(0, "ShaderVersion") is D3DX slot +0x24 and GetInt

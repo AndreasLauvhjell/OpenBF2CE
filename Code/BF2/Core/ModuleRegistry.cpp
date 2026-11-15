@@ -13,9 +13,7 @@
 namespace dice { namespace hfe {
 class ConsoleObject;                                        // Core/ConsoleObject.h
 std::list<ConsoleObject*>& gameConsoleObjects();            // Game/Main/GameConsole.cpp
-#if DEDICATED
 std::list<ConsoleObject*>& openBf2ConsoleObjects();         // Game/Main/OpenBF2Console.cpp [CHOSEN, not recovered]
-#endif
 std::list<ConsoleObject*>& serverSettingsConsoleObjects();  // Game/GameServer/ServerSettingsConsole.cpp
 std::list<ConsoleObject*>& mapListConsoleObjects();         // Game/MapListConsole.cpp
 std::list<ConsoleObject*>& gameLogicConsoleObjects();       // Game/GameLogic/GameLogicConsole.cpp
@@ -968,20 +966,17 @@ bool ModuleBF2::init()
 {
     consoleObjects()->registerConsoleObjects(listAt(0x8AD45A8));
     consoleObjects()->registerConsoleObjects(gameConsoleObjects());
-#if DEDICATED
-    // [CHOSEN, not recovered] OpenBF2's own openbf2.* console object (Game/Main/OpenBF2Console.cpp,
-    // B2BF/OpenBF2#39). Dedicated-server image only; not a recovered retail registration.
+    // [CHOSEN, not recovered] OpenBF2's own openbf2.* console object (Game/Main/OpenBF2Console.cpp):
+    // addModDll in the dedicated image (B2BF/OpenBF2#39), the diagnostic overlays in the client.
+    // Not a recovered retail registration.
     consoleObjects()->registerConsoleObjects(openBf2ConsoleObjects());
-#endif
     return true;
 }
 bool ModuleBF2::close()
 {
     consoleObjects()->unregisterConsoleObjects(listAt(0x8AD45A8));
     consoleObjects()->unregisterConsoleObjects(gameConsoleObjects());
-#if DEDICATED
     consoleObjects()->unregisterConsoleObjects(openBf2ConsoleObjects());
-#endif
     return true;
 }
 

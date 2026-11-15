@@ -81,6 +81,244 @@ bool isUnlockedInteractiveConsole(const OldConsole* console)
 // Shared mutable output sink for callers that discard console output.
 std::string Console::ignoredString_;
 
+// [CHOSEN, not recovered] Line tags for the openbf2.console.* filters (see Console.h). One tag
+// deque per console, kept in step with m_lines by pushOutputLine and setMaxHistorySize.
+namespace {
+unsigned char g_outputTag = kNoOutputTag;
+bool (*g_outputLineHidden)(unsigned char) = 0;
+std::map<const OldConsole*, std::deque<unsigned char> > g_outputLineTags;
+
+bool outputLineHidden(const OldConsole* console, std::size_t index)
+{
+    if (!g_outputLineHidden)
+        return false;
+    std::map<const OldConsole*, std::deque<unsigned char> >::const_iterator it =
+        g_outputLineTags.find(console);
+    if (it == g_outputLineTags.end() || index >= it->second.size())
+        return false;
+    const unsigned char tag = it->second[index];
+    return tag != kNoOutputTag && g_outputLineHidden(tag);
+}
+
+// The tag of one stored line, or kNoOutputTag.
+unsigned char outputLineTag(const OldConsole* console, std::size_t index)
+{
+    std::map<const OldConsole*, std::deque<unsigned char> >::const_iterator it =
+        g_outputLineTags.find(console);
+    if (it == g_outputLineTags.end() || index >= it->second.size())
+        return kNoOutputTag;
+    return it->second[index];
+}
+
+// The indexes of the lines the current filter shows, oldest first.
+std::vector<std::size_t> visibleOutputLines(const OldConsole* console, std::size_t total)
+{
+    std::vector<std::size_t> visible;
+    visible.reserve(total);
+    for (std::size_t i = 0; i < total; ++i)
+        if (!outputLineHidden(console, i))
+            visible.push_back(i);
+    return visible;
+}
+} // anonymous namespace
+
+void setOutputTag(unsigned char tag) { g_outputTag = tag; }
+unsigned char currentOutputTag() { return g_outputTag; }
+
+// [CHOSEN, not recovered] The refusal and argument-error texts handleCommand and getArgs return
+// with status 0, which the console otherwise prints like any result.
+bool isConsoleErrorResult(const std::string& result)
+{
+    static const char* const prefixes[] = {
+        "Unknown object or method!", "Unauthorised method!", "Method is not active!",
+        "Property is only readable!", "Property is only setable!",
+        "Properties only takes one argument!", "Too few arguments", "Too many arguments",
+        "Unknown variable ", "Unknown constant ", "no closing '\"'!", "Error:" };
+    for (std::size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+        if (result.compare(0, std::strlen(prefixes[i]), prefixes[i]) == 0)
+            return true;
+    return false;
+}
+void setOutputLineFilter(bool (*hidden)(unsigned char)) { g_outputLineHidden = hidden; }
+
+namespace {
+std::FILE* g_outputLogFile = 0;   // openbf2.console.log sink, owned by its caller
+} // anonymous namespace
+void setOutputLogFile(std::FILE* file) { g_outputLogFile = file; }
+
+#if !DEDICATED
+// [CHOSEN, not recovered] Console aliases; see Console.h.
+namespace {
+typedef std::map<std::string, std::string, NoCaseStringCompare> AliasMap;
+AliasMap g_aliases;
+bool     g_aliasesLoaded  = false;
+bool     g_aliasesLoading = false;   // set while loadAliases reads the file: no saving then
+
+std::string aliasFilePath()
+{
+    std::string home = fileManager ? fileManager->getHomeSubstitution() : std::string();
+    if (!home.empty() && home[home.size() - 1] != '/' && home[home.size() - 1] != '\\')
+        home += '/';
+    return home + "OpenBF2Aliases.con";
+}
+
+void saveAliases()
+{
+    std::FILE* file = std::fopen(aliasFilePath().c_str(), "w");
+    if (!file)
+        return;
+    std::fprintf(file, "rem OpenBF2 console aliases. One \"alias <name> <command>\" per line.\n"
+                       "rem Change them in the console with openbf2.console.alias / unalias.\n");
+    for (AliasMap::const_iterator it = g_aliases.begin(); it != g_aliases.end(); ++it)
+        std::fprintf(file, "alias %s %s\n", it->first.c_str(), it->second.c_str());
+    std::fclose(file);
+}
+
+void loadAliases()
+{
+    if (g_aliasesLoaded)
+        return;
+    g_aliasesLoaded = true;
+    std::FILE* file = std::fopen(aliasFilePath().c_str(), "r");
+    if (!file)
+    {
+        // First run: a few shorthands for the openbf2 commands.
+        g_aliases["clear"] = "openbf2.console.clear";
+        g_aliases["dump"]  = "openbf2.console.dump";
+        g_aliases["stfu"]  = "openbf2.console.mute 1";
+        g_aliases["speak"] = "openbf2.console.mute 0";
+        g_aliases["stats"] = "openbf2.stats.showall";
+        g_aliases["list"]  = "openbf2.console.list";
+        g_aliases["help"]  = "openbf2.console.help";
+        saveAliases();
+        return;
+    }
+    g_aliasesLoading = true;
+    char buffer[512];
+    while (std::fgets(buffer, sizeof(buffer), file))
+    {
+        std::istringstream line(buffer);
+        std::string keyword, name, command;
+        if (!(line >> keyword >> name) || compareIgnoreCase(keyword.c_str(), "alias") != 0)
+            continue;
+        std::getline(line, command);
+        const std::string::size_type first = command.find_first_not_of(" \t");
+        const std::string::size_type last  = command.find_last_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            continue;
+        std::string error;
+        setConsoleAlias(name, command.substr(first, last - first + 1), error);
+    }
+    g_aliasesLoading = false;
+    std::fclose(file);
+}
+
+// addAlias's name rules (server image): reserved words, then only a-z, 0-9 and '_'.
+bool aliasNameAllowed(const std::string& name, std::string& error)
+{
+    static const char* const reserved[] = {
+        "exit", "quit", "run", "include", "alias", "unalias", "listalias",
+        // Beyond addAlias: the script keywords handleCommand reads before any alias lookup.
+        "if", "else", "elseif", "endif", "rem", "beginrem", "endrem", "beginnoexecution",
+        "endnoexecution", "var", "const", "while", "endwhile", "echo" };
+    for (std::size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i)
+        if (name == reserved[i])
+        {
+            error = "Wrong syntax!: \"" + name + "\" not allowed as alias.";
+            return false;
+        }
+    if (name.empty())
+    {
+        error = "Wrong syntax!: an alias needs a name.";
+        return false;
+    }
+    for (std::size_t i = 0; i < name.size(); ++i)
+    {
+        const char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+        {
+            error = "Wrong syntax!: \"" + name + "\" not allowed as alias.";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string lowerCase(std::string text)
+{
+    for (std::size_t i = 0; i < text.size(); ++i)
+        if (text[i] >= 'A' && text[i] <= 'Z')
+            text[i] = static_cast<char>(text[i] - 'A' + 'a');
+    return text;
+}
+} // anonymous namespace
+
+bool setConsoleAlias(const std::string& name, const std::string& command, std::string& error)
+{
+    if (!g_aliasesLoading)                   // loadAliases calls back here while reading the file
+        loadAliases();
+    const std::string lower = lowerCase(name);
+    if (!aliasNameAllowed(lower, error))
+        return false;
+    if (command.empty())
+    {
+        error = "Wrong syntax!: an alias needs a command.";
+        return false;
+    }
+    g_aliases[lower] = command;
+    if (!g_aliasesLoading)
+        saveAliases();
+    return true;
+}
+
+bool removeConsoleAlias(const std::string& name)
+{
+    loadAliases();
+    if (g_aliases.erase(name) == 0)
+        return false;
+    saveAliases();
+    return true;
+}
+
+const std::string* findConsoleAlias(const std::string& name)
+{
+    loadAliases();
+    AliasMap::const_iterator it = g_aliases.find(name);
+    return it == g_aliases.end() ? 0 : &it->second;
+}
+
+std::string listConsoleAliases()
+{
+    loadAliases();
+    std::string out;
+    for (AliasMap::const_iterator it = g_aliases.begin(); it != g_aliases.end(); ++it)
+        out += it->first + " = " + it->second + "\n";
+    if (out.empty())
+        out = "No aliases.\n";
+    return out;
+}
+#endif
+
+// [CHOSEN, not recovered] The edit-line cursor per console (OldConsole::editKey). -1, or no entry,
+// means the end of the line, which is the only place retail edits.
+namespace {
+std::map<const OldConsole*, int> g_editCursor;
+
+int editCursor(const OldConsole* console, int length)
+{
+    std::map<const OldConsole*, int>::const_iterator it = g_editCursor.find(console);
+    const int cursor = (it == g_editCursor.end()) ? -1 : it->second;
+    return (cursor < 0 || cursor >= length) ? -1 : cursor;
+}
+
+void setEditCursor(const OldConsole* console, int cursor, int length)
+{
+    g_editCursor[console] = (cursor < 0 || cursor >= length) ? -1 : cursor;
+}
+
+bool isWordChar(char c) { return c != ' ' && c != '\t'; }
+} // anonymous namespace
+
 // Evaluates a console expression and writes a diagnostic to error on invalid syntax.
 // Equality compares strings; ordering uses atof; boolean operations use atoi.
 // Unary negation arrives as lhs="!" or "not", op=operand and an empty rhs.
@@ -293,7 +531,16 @@ void OldConsole::executeLine(const std::string& command, std::string& out,
             if (m_outputRedirectFile.empty())            // field at 1108
             {
                 if (outputError)
+                {
+                    // [CHOSEN, not recovered] Tag refusals and argument errors so the client
+                    // console can draw them in red; ordinary results stay untagged.
+                    // Any other result is the command's answer (a property read or a method's
+                    // return value) and is drawn in the value colour.
+                    const unsigned char savedTag = currentOutputTag();
+                    setOutputTag(isConsoleErrorResult(result) ? kErrorOutputTag : kValueOutputTag);
                     output(result);
+                    setOutputTag(savedTag);
+                }
             }
             else
             {
@@ -304,7 +551,12 @@ void OldConsole::executeLine(const std::string& command, std::string& out,
 
         case 2:                                          // error, unless the command was `run`
             if (firstToken != "run" && outputError)
+            {
+                const unsigned char savedTag = currentOutputTag();   // [CHOSEN, not recovered]
+                setOutputTag(kErrorOutputTag);                        //   red in the client console
                 output("Error: " + result);
+                setOutputTag(savedTag);
+            }
             break;
 
         case 3:                                          // echo - the `echo` keyword's own status
@@ -625,6 +877,24 @@ int OldConsole::handleCommand(const std::string& cmd, std::string& result, Acces
 
         if ((in >> token) && !token.empty())
         {
+#if !DEDICATED
+            // [CHOSEN, not recovered] Console aliases (openbf2.console.alias): a bare word that names
+            // an alias is replaced by its command, the rest of the line kept as its arguments. One
+            // expansion only, so an alias cannot loop. Retail has no bare-word commands, so such a
+            // token was always "Unknown object or method!".
+            if (token.find('.') == std::string::npos)
+            {
+                if (const std::string* command = findConsoleAlias(token))
+                {
+                    std::string rest;
+                    std::getline(in, rest);
+                    in.clear();
+                    in.str(*command + rest);
+                    if (!(in >> token))
+                        token.clear();
+                }
+            }
+#endif
             const std::string::size_type dot = token.find('.');
             if (dot != std::string::npos && dot > 0 && dot + 1 < token.size())
             {
@@ -849,11 +1119,24 @@ void OldConsole::output(const std::string& text)
 // the binary for the same reason a compiler inlines it, not because dice had two of them.
 void OldConsole::pushOutputLine(const std::string& line)
 {
+    std::deque<unsigned char>& tags = g_outputLineTags[this];   // [CHOSEN, not recovered] line tags
+    tags.resize(m_lines.size(), kNoOutputTag);
+
     if (static_cast<int>(m_lines.size()) >= m_maxHistorySize)
+    {
         m_lines.pop_front();                  // evict the oldest, then push - never drops the new
+        if (!tags.empty()) tags.pop_front();
+    }
 
     m_lines.push_back(line);
+    tags.push_back(g_outputTag);
     ++m_linesWritten;
+
+    if (g_outputLogFile && this == mainConsole)   // [CHOSEN, not recovered] openbf2.console.log
+    {
+        std::fprintf(g_outputLogFile, "%s\n", line.c_str());
+        std::fflush(g_outputLogFile);
+    }
 }
 
 // Returns matching names and values, listed from outermost to innermost scope.
@@ -924,6 +1207,40 @@ std::string OldConsole::listConstants(const std::string& filter)
 // [UNRESOLVED] Return contract beyond the current void declaration.
 void OldConsole::updateAsciiKey(char key)
 {
+    // [CHOSEN, not recovered] Edits at a cursor moved into the line (editKey). With the cursor at
+    // the end (always, unless editKey moved it) everything below runs exactly as retail.
+    {
+        const bool isPrintable = key != 13 && key != 8 && key != 127 && key != 9 && key != 16
+                              && key != 14 && key != 2 && key != 6 && key != 0;
+        const int cursor = editCursor(this, m_currentLineLength);
+        if (cursor >= 0 && (key == 8 || isPrintable))
+        {
+            if (key == 8)
+            {
+                if (cursor > 0)
+                {
+                    std::memmove(m_currentLineBuffer + cursor - 1, m_currentLineBuffer + cursor,
+                                 static_cast<std::size_t>(m_currentLineLength - cursor + 1));
+                    --m_currentLineLength;
+                    setEditCursor(this, cursor - 1, m_currentLineLength);
+                }
+            }
+            else if (m_currentLineLength < m_maxLineSize)
+            {
+                std::memmove(m_currentLineBuffer + cursor + 1, m_currentLineBuffer + cursor,
+                             static_cast<std::size_t>(m_currentLineLength - cursor + 1));
+                m_currentLineBuffer[cursor] = key;
+                ++m_currentLineLength;
+                setEditCursor(this, cursor + 1, m_currentLineLength);
+            }
+            m_historyCursor = 0;                 // the retail tail below, for a non-history key
+            m_scrollPage    = 0;
+            return;
+        }
+        if (key != 2 && key != 6)                // scrolling keeps the cursor; any other edit ends it
+            setEditCursor(this, -1, m_currentLineLength);
+    }
+
     switch (key)
     {
     case 13:                                    // Enter - execute the line
@@ -996,7 +1313,10 @@ void OldConsole::updateAsciiKey(char key)
     case 2:                                     // PageUp - scroll back
     case 6:                                     // PageDown - scroll forward
     {
-        const int pages = static_cast<int>(m_lines.size()) / m_scrollPageSize;
+        // [CHOSEN, not recovered] Counts only the lines the openbf2.console.* filter shows; the
+        // same as m_lines.size() while no filter hides anything.
+        const int pages = static_cast<int>(visibleOutputLines(this, m_lines.size()).size())
+                        / m_scrollPageSize;
         if (!pages)
             break;
 
@@ -1060,6 +1380,15 @@ void OldConsole::autoCompletion()
         echo += line;
         output(echo);                               // vtable +20
     }
+
+    // [CHOSEN, not recovered] Every candidate and signature line below is tagged as a suggestion,
+    // so the client console draws it in its own colour; the echoed line above stays plain.
+    struct SuggestionTagScope
+    {
+        unsigned char saved;
+        SuggestionTagScope() : saved(currentOutputTag()) { setOutputTag(kSuggestionOutputTag); }
+        ~SuggestionTagScope() { setOutputTag(saved); }
+    } suggestionTag;
 
     if (argument[0] != '\0')
     {
@@ -1361,13 +1690,19 @@ void OldConsole::updateGameInput(const GameInput& input)
     const int savedAccess = mainConsole->getAccess();
     mainConsole->setAccess(1);                       // mainConsole, not this - as run() does
 
+    // [CHOSEN, not recovered] Ctrl+PageUp/PageDown move the edit cursor to the start or end of the
+    // line instead (queued by the window procedure, see editKey), so they do not scroll here.
+    const bool ctrlHeld =
+        ((input.mappingFlags & (1ULL << GILeftCtrl)) && input.inputs[GILeftCtrl] > 0.5f)
+        || ((input.mappingFlags & (1ULL << GIRightCtrl)) && input.inputs[GIRightCtrl] > 0.5f);
+
     if ((input.mappingFlags & (1ULL << GIUp)) && input.inputs[GIUp] > 0.5f)
         updateAsciiKey(16);
     else if ((input.mappingFlags & (1ULL << GIDown)) && input.inputs[GIDown] > 0.5f)
         updateAsciiKey(14);
-    else if ((input.mappingFlags & (1ULL << GIPageUp)) && input.inputs[GIPageUp] > 0.5f)
+    else if ((input.mappingFlags & (1ULL << GIPageUp)) && input.inputs[GIPageUp] > 0.5f && !ctrlHeld)
         updateAsciiKey(2);
-    else if ((input.mappingFlags & (1ULL << GIPageDown)) && input.inputs[GIPageDown] > 0.5f)
+    else if ((input.mappingFlags & (1ULL << GIPageDown)) && input.inputs[GIPageDown] > 0.5f && !ctrlHeld)
         updateAsciiKey(6);
 
     mainConsole->setAccess(savedAccess);
@@ -1416,6 +1751,11 @@ void OldConsole::setMaxHistorySize(int size)
 
     while (static_cast<int>(m_lines.size()) > m_maxHistorySize)
         m_lines.pop_front();
+
+    // [CHOSEN, not recovered] Keep the openbf2.console.* line tags in step (drop the oldest).
+    std::deque<unsigned char>& tags = g_outputLineTags[this];
+    while (tags.size() > m_lines.size())
+        tags.pop_front();
 }
 
 void OldConsole::setMaxCommandHistorySize(int size)
@@ -1432,7 +1772,10 @@ void OldConsole::setMaxCommandHistorySize(int size)
 // The current input line is always appended, even when no history fits.
 void OldConsole::getLines(int rows, std::vector<std::string>& out) const
 {
-    const int total = static_cast<int>(m_lines.size());
+    // [CHOSEN, not recovered] The window runs over the lines the openbf2.console.* filter shows.
+    // While no filter hides anything this is every line, in order, which is the retail window.
+    const std::vector<std::size_t> visible = visibleOutputLines(this, m_lines.size());
+    const int total = static_cast<int>(visible.size());
 
     // Built up front, exactly as both ports do, and pushed last.
     std::string currentLine = m_prompt;
@@ -1452,7 +1795,24 @@ void OldConsole::getLines(int rows, std::vector<std::string>& out) const
         --count;                        // the truncation bar takes a row from the history
 
     for (int i = 0; i < count; ++i)
-        out.push_back(m_lines[scrollOffset + i]);
+    {
+        const std::size_t index = visible[scrollOffset + i];
+#if !DEDICATED
+        // [CHOSEN, not recovered] Error, suggestion and value lines go to the client console draw
+        // with their colour marker.
+        const unsigned char tag = outputLineTag(this, index);
+        const char marker = tag == kErrorOutputTag      ? kConsoleErrorMarker
+                          : tag == kSuggestionOutputTag ? kConsoleSuggestionMarker
+                          : tag == kValueOutputTag      ? kConsoleValueMarker
+                          : '\0';
+        if (marker != '\0')
+        {
+            out.push_back(std::string(1, marker) + m_lines[index]);
+            continue;
+        }
+#endif
+        out.push_back(m_lines[index]);
+    }
 
     if (m_scrollPage)
     {
@@ -1461,8 +1821,62 @@ void OldConsole::getLines(int rows, std::vector<std::string>& out) const
             "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"));
     }
 
-    currentLine.append(m_currentLineBuffer);
+    // [CHOSEN, not recovered] A cursor moved into the line (editKey) is shown as '|'. At the end
+    // of the line nothing is added, as in retail.
+    const int cursor = editCursor(this, m_currentLineLength);
+    if (cursor >= 0)
+    {
+        currentLine.append(m_currentLineBuffer, static_cast<std::size_t>(cursor));
+#if DEDICATED
+        currentLine.append(1, '|');
+#else
+        currentLine.append(1, kConsoleCursorMarker);   // drawn by RendDX9 as a blinking caret
+#endif
+        currentLine.append(m_currentLineBuffer + cursor);
+    }
+    else
+        currentLine.append(m_currentLineBuffer);
     out.push_back(currentLine);
+}
+
+void OldConsole::editKey(unsigned char code)
+{
+    const int length = m_currentLineLength;
+    int position = editCursor(this, length);
+    if (position < 0)
+        position = length;
+    const char* const line = m_currentLineBuffer;
+
+    if (code == ConsoleEditLeft && position > 0)
+        --position;
+    else if (code == ConsoleEditRight && position < length)
+        ++position;
+    else if (code == ConsoleEditHome)
+        position = 0;
+    else if (code == ConsoleEditEnd)
+        position = length;
+    else if (code == ConsoleEditWordLeft)
+    {
+        while (position > 0 && !isWordChar(line[position - 1]))
+            --position;
+        while (position > 0 && isWordChar(line[position - 1]))
+            --position;
+    }
+    else if (code == ConsoleEditWordRight)
+    {
+        while (position < length && isWordChar(line[position]))
+            ++position;
+        while (position < length && !isWordChar(line[position]))
+            ++position;
+    }
+    setEditCursor(this, position, length);
+}
+
+void OldConsole::copyVisibleLines(std::vector<std::string>& out) const
+{
+    const std::vector<std::size_t> visible = visibleOutputLines(this, m_lines.size());
+    for (std::size_t i = 0; i < visible.size(); ++i)
+        out.push_back(m_lines[visible[i]]);
 }
 
 // Variable and constant names are case-insensitive and local to their declaration scope.

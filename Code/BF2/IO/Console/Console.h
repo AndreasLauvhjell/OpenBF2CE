@@ -9,6 +9,7 @@
 #include <vector>
 #include <list>
 #include <sstream>
+#include <cstdio>          // std::FILE - setOutputLogFile [CHOSEN, not recovered]
 
 // NoCaseStringCompare lives in IO/File/IFileSystem.h. The console's per-level variable and constant
 // maps use it, which is why `sv.MaxPlayers` and `sv.maxplayers` are the same key — content relies on
@@ -126,6 +127,16 @@ public:
     void updateGameInput(const GameInput&) override;
     void updateKeyMacros(const GameInput&) override;                               // +32  0x844d5c0  empty (5 B)
     void getLines(int, std::vector<std::string>&) const override;
+    // [CHOSEN, not recovered] Appends every stored output line the openbf2.console.* filter shows,
+    // oldest first, ignoring the scroll position (openbf2.console.print). Non-virtual; the retail
+    // vtable and layout are unchanged.
+    void copyVisibleLines(std::vector<std::string>& out) const;
+    // [CHOSEN, not recovered] Moves the edit-line cursor (one of the ConsoleEdit* codes below).
+    // Retail has no cursor inside the line: it only types and erases at the end. With the cursor
+    // moved into the line, typing and Backspace work at the cursor and getLines shows it as '|'.
+    // Any other edit (Enter, Tab, Delete, history recall) puts the cursor back at the end.
+    // Non-virtual; the retail vtable and layout are unchanged.
+    void editKey(unsigned char code);
     bool run(const std::string& file, const std::string& a1, const std::string& a2,
              const std::string& a3, const std::string& a4, const std::string& a5,
              const std::string& a6, const std::string& a7, const std::string& a8,
@@ -354,6 +365,67 @@ extern OldConsole* mainConsole;
 // The console handleCommand is currently dispatching for; set immediately before a binding runs so a
 // binding can reach back to its caller (e.g. isDispatchingArchiveScript). Null before the first dispatch.
 extern OldConsole* g_executingConsole;
+
+// [CHOSEN, not recovered] Output-line tags for OpenBF2's console filters (openbf2.console.*).
+// Every line an OldConsole stores gets the tag that is current when it is pushed; kNoOutputTag
+// (the default) marks ordinary console output. When a line filter is installed, getLines and
+// PageUp/PageDown skip the lines whose tag it hides, so a filter change also applies to lines
+// already in the history and nothing is deleted. Kept outside the class; the retail layout of
+// OldConsole is unchanged.
+const unsigned char kNoOutputTag = 0xFF;
+void setOutputTag(unsigned char tag);
+unsigned char currentOutputTag();
+// [CHOSEN, not recovered] Console error lines (refusals, unknown commands, syntax errors) carry
+// this tag. On the client, getLines prefixes them with kConsoleErrorMarker, which the RendDX9
+// console draw strips and draws the line in red. The marker never reaches m_lines, a dump or a log.
+const unsigned char kErrorOutputTag = 0xFE;
+const char kConsoleErrorMarker = '\x01';
+// [CHOSEN, not recovered] Tab completion candidates and signatures (OldConsole::autoCompletion)
+// and the value a command answers with (a property read, a method's return value) are marked the
+// same way, so the client console draws them in their own colours.
+const unsigned char kSuggestionOutputTag = 0xFD;
+const unsigned char kValueOutputTag = 0xFC;
+const char kConsoleSuggestionMarker = '\x03';
+const char kConsoleValueMarker = '\x04';
+// [CHOSEN, not recovered] On the client, getLines marks a cursor moved into the edit line with this
+// character; the RendDX9 console draw replaces it with a blinking, coloured caret.
+const char kConsoleCursorMarker = '\x02';
+bool isConsoleErrorResult(const std::string& result);
+void setOutputLineFilter(bool (*hidden)(unsigned char tag));
+// [CHOSEN, not recovered] openbf2.console.log: while a sink is set, every line mainConsole
+// stores is also written to it at once, whatever the filters hide. Null stops it. The caller owns
+// the file.
+void setOutputLogFile(std::FILE* file);
+
+// [CHOSEN, not recovered] Console aliases (openbf2.console.alias). BF2 1.50 still carries the cut
+// OldConsole::addAlias in the server image but never calls it; these bring the feature back on the
+// client. An alias is a bare word (no dot) that handleCommand replaces with its command text, the
+// rest of the line appended. Names follow addAlias's rules: lower case, only a-z, 0-9 and '_', and
+// not exit, quit, run, include, alias, unalias or listalias. The list is kept in
+// <home>/OpenBF2Aliases.con (one "alias <name> <command>" per line), written with defaults the
+// first time it is missing.
+// Sets or replaces an alias; false with the reason in error when the name is refused.
+bool setConsoleAlias(const std::string& name, const std::string& command, std::string& error);
+// Removes an alias; false when there was none.
+bool removeConsoleAlias(const std::string& name);
+// The command for a name, or null.
+const std::string* findConsoleAlias(const std::string& name);
+// Every alias as "name = command" lines.
+std::string listConsoleAliases();
+
+// [CHOSEN, not recovered] Edit-line navigation codes for OldConsole::editKey. The client's window
+// procedure queues them in the console character ring in the order the keys were pressed. They
+// are control characters no WM_CHAR is allowed to put in that ring.
+const unsigned char ConsoleEditWordLeft  = 0x11;   // Ctrl+Left
+const unsigned char ConsoleEditWordRight = 0x12;   // Ctrl+Right
+const unsigned char ConsoleEditLeft      = 0x1C;
+const unsigned char ConsoleEditRight     = 0x1D;
+const unsigned char ConsoleEditHome      = 0x1E;   // start of line (Ctrl+PageUp)
+const unsigned char ConsoleEditEnd       = 0x1F;   // end of line (Ctrl+PageDown)
+inline bool isConsoleEditCode(unsigned char c)
+{
+    return c == ConsoleEditWordLeft || c == ConsoleEditWordRight || (c >= ConsoleEditLeft && c <= ConsoleEditEnd);
+}
 
 } // namespace io
 } // namespace hfe

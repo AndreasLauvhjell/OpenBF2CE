@@ -920,13 +920,30 @@ void BfSound::drawStats()
 {
     if (!m_showStats || !io::mainConsole || io::mainConsole->getConsoleActive())
         return;
-    const SoundStats* stats = static_cast<const SoundStats*>(g_bfSound->engine()->getStats());
     std::vector<std::string> lines;
     lines.reserve(32);
+    collectSoundStatsLines(lines);
+    IDebugTextWriter* writer =
+        static_cast<IDebugTextWriter*>(classManager->getSingleton(std::string("DebugTextWriterFixed")));
+    writer->queueGroupColoured(1, 1, 0xFF000000u, lines, 0, 0, 0);
+    writer->queueGroupColoured(0, 0, 0xFF00FF00u, lines, 0, 0, 0);
+}
+
+// The drawStats text, split out of BfSound::drawStats unchanged so openbf2.stats.audio can show
+// it too ([CHOSEN, not recovered] placement; the lines themselves are drawStats' recovered ones).
+void collectSoundStatsLines(std::vector<std::string>& lines)
+{
+    if (!g_bfSound || !g_bfSound->engine())
+    {
+        lines.push_back(std::string("No stats available."));
+        return;
+    }
+    ISoundEngine* const e = g_bfSound->engine();
+    const SoundStats* stats = static_cast<const SoundStats*>(e->getStats());
     if (stats)
     {
         lines.push_back(formatString("Provider            : %s", stats->providerInfo));
-        lines.push_back(formatString("Quality Level       : %s", qualityName(engine()->getQualityLevel())));
+        lines.push_back(formatString("Quality Level       : %s", qualityName(e->getQualityLevel())));
         lines.push_back(formatString("Playing samples     : %u", stats->playing));
         lines.push_back(formatString("Active samples      : %u", stats->waiting));
         lines.push_back(formatString("Inactive samples    : %u", stats->delayed));
@@ -942,24 +959,20 @@ void BfSound::drawStats()
         lines.push_back(formatString("Loaded samples      : %u", stats->loadedFiles));
         lines.push_back(formatString("#Sounds             : %u", stats->sounds));
         lines.push_back(formatString("#Samples            : %u", stats->samples));
-        lines.push_back(formatString("Master volume       : %f", engine()->getMasterVolume()));
-        lines.push_back(formatString("Effects volume      : %f", engine()->getVolumeForGroup(0)));
-        lines.push_back(formatString("Music volume        : %f", engine()->getVolumeForGroup(1)));
-        lines.push_back(formatString("Doppler effect      : %f", engine()->getDopplerEffect()));
-        lines.push_back(formatString("Interactive Mode    : %s", engine()->getInteractiveMode() ? "Yes" : "No"));
-        const Vec3* listener = engine()->getListenerPosition();
+        lines.push_back(formatString("Master volume       : %f", e->getMasterVolume()));
+        lines.push_back(formatString("Effects volume      : %f", e->getVolumeForGroup(0)));
+        lines.push_back(formatString("Music volume        : %f", e->getVolumeForGroup(1)));
+        lines.push_back(formatString("Doppler effect      : %f", e->getDopplerEffect()));
+        lines.push_back(formatString("Interactive Mode    : %s", e->getInteractiveMode() ? "Yes" : "No"));
+        const Vec3* listener = e->getListenerPosition();
         lines.push_back(formatString("Listener position   : %f/%f/%f", listener->x, listener->y, listener->z));
-        lines.push_back(formatString("Listener reverb     : %f", engine()->getListenerReverb()));
+        lines.push_back(formatString("Listener reverb     : %f", e->getListenerReverb()));
         // ("Update              : %f", 0.0) follows behind the [UNRESOLVED] global ds:0x9EB384.
     }
     else
     {
         lines.push_back(std::string("No stats available."));
     }
-    IDebugTextWriter* writer =
-        static_cast<IDebugTextWriter*>(classManager->getSingleton(std::string("DebugTextWriterFixed")));
-    writer->queueGroupColoured(1, 1, 0xFF000000u, lines, 0, 0, 0);
-    writer->queueGroupColoured(0, 0, 0xFF00FF00u, lines, 0, 0, 0);
 }
 
 namespace {

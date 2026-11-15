@@ -7,6 +7,10 @@
 
 #include <cstring>                       // strlen
 
+#if defined(_WIN32) && !DEDICATED
+#  include <windows.h>                   // clipboard - pasteClipboardIntoConsole
+#endif
+
 #include "../../Core/ConsoleObjects.h"    // the real ConsoleObject + ConsoleObjects, recovered
 namespace dice {
 namespace hfe {
@@ -142,6 +146,45 @@ std::list<std::string>& BF2Console::getVoidConsoleCommands(const std::string& co
     return m_commands;
 }
 
+#if defined(_WIN32) && !DEDICATED
+// Types the first line of the clipboard's CF_TEXT into the console edit line through
+// OldConsole::updateAsciiKey. Stops at the first CR/LF, so a paste never executes; Tab becomes a
+// space (Tab would trigger autocompletion); other control characters and 0xA7 (the console-toggle
+// character) are skipped. updateAsciiKey's own 128-character gate bounds the line.
+// [CHOSEN, not recovered] Retail inserts Ctrl+V (0x16) into the line as a raw control character.
+// The clipboard calls mirror MainMenuLogic::handleClipboardShortcut (0x4A2E10).
+// Issue: [TODO link the upstream issue before submitting].
+static void pasteClipboardIntoConsole()
+{
+    if (!OpenClipboard(0))
+        return;
+    if (IsClipboardFormatAvailable(CF_TEXT) || IsClipboardFormatAvailable(CF_OEMTEXT))
+    {
+        HANDLE data = GetClipboardData(CF_TEXT);
+        const char* text = data ? static_cast<const char*>(GlobalLock(data)) : 0;
+        if (text)
+        {
+            for (const char* p = text; *p; ++p)
+            {
+                const unsigned char c = static_cast<unsigned char>(*p);
+                if (c == '\r' || c == '\n')
+                    break;
+                if (c == '\t')
+                {
+                    io::mainConsole->updateAsciiKey(' ');
+                    continue;
+                }
+                if (c < 32 || c == 127 || c == 0xA7)
+                    continue;
+                io::mainConsole->updateAsciiKey(static_cast<char>(c));
+            }
+            GlobalUnlock(data);
+        }
+    }
+    CloseClipboard();
+}
+#endif
+
 // Drains pending console characters into OldConsole each frame. The dedicated
 // image has no character producer.
 void BF2Console::updateConsole()
@@ -180,6 +223,28 @@ void BF2Console::updateConsole()
             return;                                          //   the buffer (which is thus consumed)
         if (ch == 0xA7)                                      // 0xA7 '§', the console-toggle
             continue;                                        //   key character: swallowed, not forwarded
+#if defined(_WIN32) && !DEDICATED
+        if (ch == 0x16)                                      // [CHOSEN, not recovered] Ctrl+V pastes
+        {
+            pasteClipboardIntoConsole();
+            continue;
+        }
+        if (io::isConsoleEditCode(ch))                       // [CHOSEN, not recovered] Left/Right,
+        {                                                    //   Ctrl+Left/Right, Ctrl+PgUp/PgDn from the
+            io::mainConsole->editKey(ch);                    //   window procedure's WM_KEYDOWN
+            continue;
+        }
+        if (ch == 0x0C)                                      // [CHOSEN, not recovered] Ctrl+L clears
+        {                                                    //   the history, as openbf2.console.clear
+            if (io::mainConsole->getConsoleActive())
+            {
+                const int maxHistory = io::mainConsole->getMaxHistorySize();
+                io::mainConsole->setMaxHistorySize(0);
+                io::mainConsole->setMaxHistorySize(maxHistory);
+            }
+            continue;
+        }
+#endif
         io::mainConsole->updateAsciiKey((char)ch);           // 0x812E5B7 vcall vptr+0x18;
                                                              //   movsx at 0x812E5AB = plain (signed) char
     }
