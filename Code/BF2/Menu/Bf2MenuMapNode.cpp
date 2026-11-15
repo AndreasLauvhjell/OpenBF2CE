@@ -602,6 +602,11 @@ void rasterizeCombatArea(hfe::geom::IMemeTexture* texture,
         }
     }
     if (!measureOnly) {
+        // The outline plot joins consecutive points only, so the first point is repeated to
+        // close the polygon; without it the even-odd fill leaks along the missing edge.
+        // Callers skip empty areas, as the shipped push of the first element assumes.
+        const hfe::geom::IMemeTexture::CanvasPoint firstPoint = canvas.front();
+        canvas.push_back(firstPoint);
         // By value: plotAndFill receives its own copy of the points and frees it.
         texture->plotAndFill(canvas, value);
     }
