@@ -2,6 +2,7 @@
 // BF2.exe 753DE0, all 5845 bytes read.
 #include "BF2HudManager.h"
 #if !DEDICATED
+#include "HudColors.h"
 #include "HudKitSelection.h"
 #include "HudQuestionManager.h"
 #include "../Core/Debug.h"
@@ -36,6 +37,43 @@ template<class T> T eventValue(const void* data, unsigned offset = 0)
     return value;
 }
 const char* const hudSource = "C:\\dice\\Projects\\BF2Branches\\Patch_1_50\\Code\\BF2\\Menu\\BF2HudManager.cpp";
+
+// [CHOSEN, not recovered] Team colour tokens for kill messages. #PLAYERCOLOR#, #PLAYERCOLOR1# and
+// #PLAYERCOLOR2# expand to the four RGBA digits of a section-sign colour escape (Menu/ColorEscape.h).
+// A player who would get HudChat's commander or squad row tint gets that palette colour, so the
+// retail squad highlight survives; otherwise the retail chat blue for the local player's team, the
+// chat red for any other team, white without a local player. Retail strings contain no such token, so they are unchanged.
+// Local experiment, no issue yet.
+std::string colorDigits(const meme::Color& color)
+{
+    const float channels[4] = {color.r, color.g, color.b, color.a};
+    std::string digits;
+    for (float channel : channels) {
+        int value = static_cast<int>(channel * 15.0f + 0.5f);
+        if (value < 0) value = 0;
+        if (value > 15) value = 15;
+        digits += "0123456789ABCDEF"[value];
+    }
+    return digits;
+}
+
+std::string teamColorDigits(world::IPlayer* local, int team)
+{
+    if (!local) return "FFFF";
+    // The retail chat palette: entry 2 is the friendly blue, entry 1 the enemy red.
+    return colorDigits(defaultChatColors[team == local->getTeam() ? 2 : 1]);
+}
+
+// Mirrors the tint rule in HudChat::selectPlayerColors for one player.
+std::string playerColorDigits(world::IPlayer* local, world::IPlayer* player, int team)
+{
+    if (player && player->getIsCommander()) return colorDigits(commanderChatColor);
+    if (local && player && player->getSquadId() != 0 && local->getTeam() == player->getTeam()
+        && (local->getSquadId() == player->getSquadId()
+            || (local->getIsCommander() && player->getIsSquadLeader())))
+        return colorDigits(squadChatColors[1]); // entry 0 is white; 1..3 hold the green
+    return teamColorDigits(local, team);
+}
 }
 
 void BF2HudManager::handleGameLogicEvent(unsigned int id, EventNode*, void* data)
@@ -107,6 +145,8 @@ void BF2HudManager::handleGameLogicEvent(unsigned int id, EventNode*, void* data
                 std::string copiedName(name);
                 auto text = getLocalizedString("HUD_CHAT_YOUGOTAKILLSCORE");
                 text = replaceWideTokenFromString(std::move(text), "#PLAYERNAME#", std::move(copiedName));
+                text = replaceWideTokenFromString(std::move(text), "#PLAYERCOLOR#",
+                                                  playerColorDigits(local, victim, victimTeam));
                 text = replaceWideInputKeys(std::move(text));
                 addServerChat(std::move(text), team);
             }
@@ -144,6 +184,8 @@ void BF2HudManager::handleGameLogicEvent(unsigned int id, EventNode*, void* data
                 std::string copiedName(name);
                 text = getLocalizedString("HUD_CHAT_YOUWEREKILLEDBY");
                 text = replaceWideTokenFromString(std::move(text), "#PLAYERNAME#", std::move(copiedName));
+                text = replaceWideTokenFromString(std::move(text), "#PLAYERCOLOR#",
+                                                  playerColorDigits(local, killer, killer->getTeam()));
                 text = replaceWideInputKeys(std::move(text));
                 addServerChat(std::move(text), team);
             }
@@ -191,6 +233,10 @@ void BF2HudManager::handleGameLogicEvent(unsigned int id, EventNode*, void* data
             text = replaceWideTokenFromString(std::move(text), "#PLAYERNAME1#", std::move(copiedKillerName));
             text = replaceWideToken(std::move(text), "#WEAPON#", std::move(weaponText));
             text = replaceWideTokenFromString(std::move(text), "#PLAYERNAME2#", std::move(copiedVictimName));
+            text = replaceWideTokenFromString(std::move(text), "#PLAYERCOLOR1#",
+                                              playerColorDigits(local, killer, team));
+            text = replaceWideTokenFromString(std::move(text), "#PLAYERCOLOR2#",
+                                              playerColorDigits(local, victim, victimTeam));
             addTeamChat(std::move(text), killer, team);
         } else {
             if (!victim) return;
@@ -213,6 +259,10 @@ void BF2HudManager::handleGameLogicEvent(unsigned int id, EventNode*, void* data
                 text = replaceWideTokenFromString(std::move(text), "#PLAYERNAME1#", std::move(killerName));
                 text = replaceWideToken(std::move(text), "#WEAPON#", std::move(weaponText));
                 text = replaceWideTokenFromString(std::move(text), "#PLAYERNAME2#", std::move(copiedName));
+                text = replaceWideTokenFromString(std::move(text), "#PLAYERCOLOR1#",
+                                                  teamColorDigits(local, team));
+                text = replaceWideTokenFromString(std::move(text), "#PLAYERCOLOR2#",
+                                                  playerColorDigits(local, victim, victim->getTeam()));
                 addTeamChat(std::move(text), victim, team);
             }
         }
