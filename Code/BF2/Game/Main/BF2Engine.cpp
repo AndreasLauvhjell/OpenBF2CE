@@ -1220,6 +1220,9 @@ bool BF2Engine::parseParameters(const std::string& commandLine)
         // [CHOSEN, not recovered] https://github.com/kr4uzi/OpenBF2/issues/33
         parser.add( 76, "widescreenHud",          "Use the optional vanilla widescreen HUD (0 or 1; default 0)");
 #endif
+        // [CHOSEN, not recovered] OpenBF2 option: Raw Input mouse backend (IO/Input/MouseDevice.cpp).
+        // Id 77: kr4uzi's +widescreenHud took 76.
+        parser.add( 77, "rawMouse",               "Use Raw Input (WM_INPUT) for the mouse instead of DirectInput");
 
         // Only registered parser IDs reach these sparse switch cases.
         std::list<std::pair<int, std::string> > keyList;        // var_C8
@@ -1456,6 +1459,9 @@ bool BF2Engine::parseParameters(const std::string& commandLine)
                     }
                     break;
 #endif
+                case 77:    // +rawMouse - [CHOSEN, not recovered], value-gated on "1" like +ai
+                    settings->boolSet("GSRawMouse", value.compare("1") == 0);
+                    break;
                 // 6 (+checkForAvailablePatch), 7 (+checkForPatch) and 10 (+lowPriority) are
                 // registered but share the default target 0x8133400 - they parse and do nothing.
                 default:
