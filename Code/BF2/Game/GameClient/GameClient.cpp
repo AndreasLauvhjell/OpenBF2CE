@@ -108,6 +108,7 @@ namespace hfe {
 
 extern ClassManager* classManager;   // Core/Globals.cpp
 namespace world { extern ResponsePhysicsManager* responsePhysicsManager; }   // Core/Globals.cpp (ELF ds:0x8B27848) - PE dword_A05F98
+namespace world { void redBloodEnsureLevelListener(); }   // [CHOSEN, not recovered] Fx/RedBloodHitEffects.cpp
 namespace world { extern PhysicsNodeManager* physicsNodeManager; }          // Core/Globals.cpp (ELF ds:0x8B27844) - PE dword_A05F94
 // stepWorld's tail is the twin of GameServer::simulateFrame's, so it needs the same empty
 // declaration that file makes: 0x8050B80, 5 B - the memory DLL's arena boundary, unmodelled here.
@@ -379,6 +380,9 @@ bool GameClient::load()
                  levelPath.c_str());
     std::fflush(stderr);
 
+    // [CHOSEN, not recovered] openbf2.effects.redblood defaults to 1 in mod/combo, so its level-load
+    // listener must exist before ECCore 3 even when the console never set the option.
+    world::redBloodEnsureLevelListener();
     eventManager->postEvent(ECCore, 3, 0, 0.0f);
     eventManager->postEvent(ECCore, 7, 0, 0.0f);
     io::fileManager->setFileResolveMode(resolveMode2);

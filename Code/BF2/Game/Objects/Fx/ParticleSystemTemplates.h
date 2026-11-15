@@ -116,6 +116,10 @@ public:
     void setTransparencyGraph(const Vec4& value);
     const Vec4& getTransparencyGraph() const;
 
+    // [CHOSEN, not recovered] True when the renderer descriptor exists (never on the dedicated
+    // server). Lets OpenBF2 extensions call getters that forward to it without a null check.
+    bool hasRenderTemplate() const { return m_impl != 0; }
+
 protected:
     // layout, +0x30..+0x43. ObjectTemplate occupies 0x00..0x2F.
     // m_emitterType is NOT written by the constructor's stores - the tail call

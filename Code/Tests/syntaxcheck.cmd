@@ -233,6 +233,8 @@ cl %FLAGS% "%~dp0..\BF2\Game\Objects\Fx\ModuleWorldObjTemplFxEffect.cpp"
 if errorlevel 1 set /a RC+=1
 cl %FLAGS% "%~dp0..\BF2\Game\Objects\Fx\ModuleWorldObjTemplFxParticles.cpp"
 if errorlevel 1 set /a RC+=1
+cl %FLAGS% "%~dp0..\BF2\Game\Objects\Fx\RedBloodHitEffects.cpp"
+if errorlevel 1 set /a RC+=1
 cl %FLAGS% "%~dp0..\BF2\Scene\Object\ObjectPriorityCalculator.cpp"
 if errorlevel 1 set /a RC+=1
 cl %FLAGS% "%~dp0..\BF2\IO\File\BufferedStream.cpp"
@@ -1654,6 +1656,9 @@ if errorlevel 1 set /a RC+=1
 cl %FLAGS0% "%~dp0..\BF2\Game\Objects\Visual\LightSource.cpp"
 if errorlevel 1 set /a RC+=1
 cl %FLAGS0% "%~dp0..\BF2\Game\Objects\Visual\LightSourceTemplate.cpp"
+if errorlevel 1 set /a RC+=1
+@rem [CHOSEN, not recovered] openbf2.effects.redblood: the whole unit is client-only.
+cl %FLAGS0% "%~dp0..\BF2\Game\Objects\Fx\RedBloodHitEffects.cpp"
 if errorlevel 1 set /a RC+=1
 
 @rem [CHOSEN, not recovered] macOS D3DX helper TUs must remain empty on MSVC.
