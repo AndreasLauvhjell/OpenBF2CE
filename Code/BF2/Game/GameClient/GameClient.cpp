@@ -59,6 +59,7 @@
 #include "../Objects/Game/Ladder.h"           // enterVehicle: ladderMap (ds:0x9ED63C) + detachSoldier (5C1780)
 #include "../Objects/Game/Kit.h"              // createKit: m_chosenUnlockLevel (+0x18C) + updateUnlockStatus (596080)
 #include "../Objects/Game/Soldier.h"          // enterVehicle: setLookUpDownAngle on the occupant (5A99F0)
+#include "../Objects/Game/PlayerControlObject.h"   // handleControlObjectState: special-toggle latch
 #include "../Objects/Base/Camera.h"           // enterVehicle: the camera's +0x178 = setCurrentRotation
 #include "../Objects/ObjectLayoutAccess.h"    // enterVehicle: the m_parent walks (IObject +0x28)
 #include "../GameLogic/ClientGameLogic.h"     // enterVehicle: clearPendingExit (PE vtable +0x304)
@@ -1602,6 +1603,17 @@ void GameClient::destroyPlayer(world::IPlayer* player)
     delete player;                                   // : the deleting destructor through the vtable
 }
 
+namespace {
+// [CHOSEN, not recovered] issue: TBD. The control object whose special-toggle latch
+// GameLogic::selectWeapon edge-tests for this vehicle, or null when it uses none.
+world::PlayerControlObject* specialTogglePco(world::IObject* vehicle)
+{
+    if (!vehicle || vehicle->getTemplate()->getClassID() != world::CID_PlayerControlObjectTemplate)
+        return 0;
+    return static_cast<world::PlayerControlObject*>(vehicle);
+}
+} // namespace
+
 // Acknowledges an input index and replays newer local actions over received server state.
 // The tick resets world time; each replay advances it. Repeated state and vehicle queries
 // retain their side effects. This implementation zero-initializes the full PlayerInput,
@@ -1626,6 +1638,22 @@ bool GameClient::handleControlObjectState(io::BitStream*, unsigned short network
         buffer->popFront();
         const long long replayStart = frametiming::simStart();   // [CHOSEN, not recovered] openbf2.stats.frame sim split
         io::networkManager->getDescriptor(networkableId);           // result discarded
+
+        // [CHOSEN, not recovered] issue: TBD. Retail shares the vehicle's special-toggle edge
+        // latch between live input and this replay, so after a server correction the replayed
+        // toggle press can be missed (the live tick already latched it) or a held press can fire
+        // again, and the helicopter gunner's cannon/TV camera flickers. The replay instead starts
+        // from the latch as it stood after the acknowledged input, which popFront has just
+        // latched as the buffer's current action, and the live latch is restored afterwards.
+        world::PlayerControlObject* const togglePco = specialTogglePco(local->getVehicle());
+        const bool liveTogglePressed = togglePco ? togglePco->getSpecialTogglePressed() : false;
+        if (togglePco)
+        {
+            io::PlayerInput acknowledgedInput = io::PlayerInput();
+            buffer->m_current.get(acknowledgedInput);
+            togglePco->setSpecialTogglePressed(false);
+            togglePco->checkSpecialToggle(acknowledgedInput);       // latch = key down at the ack
+        }
 
         for (std::list<ActionBufferEntry>::const_iterator it = buffer->m_entries.begin();
              it != buffer->m_entries.end(); ++it)
@@ -1656,6 +1684,9 @@ bool GameClient::handleControlObjectState(io::BitStream*, unsigned short network
             world::responsePhysicsManager->reset();                  // PE +0x20
             performMobileCollisionUpdate(deltaTime, local->getVehicle(), false);
         }
+
+        if (togglePco)                                              // [CHOSEN, not recovered] see above
+            togglePco->setSpecialTogglePressed(liveTogglePressed);
         frametiming::simAdd(frametiming::SecSReplay, replayStart);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
     }
 

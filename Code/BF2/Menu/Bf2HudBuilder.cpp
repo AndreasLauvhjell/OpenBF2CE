@@ -465,11 +465,13 @@ bool Bf2HudBuilder::setBarNodeValueVariable(std::string variable)
 }
 
 // PE79D9A0..79DB86 (468 B). The compass takes the direction and the two flags;
-// the transform still takes the rectangle. Note the compass node is also named
+// the transform still takes the rectangle. The eighth script argument is the
+// wrap flag and the ninth the snap flag, so heading compasses ("... 1 0") wrap
+// and the climb arrows ("... 0 1") snap. Note the compass node is also named
 // "<name>BarNode", not "<name>CompassNode".
 bool Bf2HudBuilder::createCompassNode(std::string parent, std::string name, int direction,
                                      int x, int y, int width, int height,
-                                     bool snap, bool wrap)
+                                     bool wrap, bool snap)
 {
     if (findNodePredecessor(parent, name)) {
         Debug(DebugTypeError, builderSource, 1670, "")
@@ -480,7 +482,7 @@ bool Bf2HudBuilder::createCompassNode(std::string parent, std::string name, int 
     meme::Bf2CompassNode* compass = nullptr;
     if (allocation) {
         const std::string compassName = name + "BarNode";
-        compass = new(allocation) meme::Bf2CompassNode(compassName.c_str(), direction, snap, wrap);
+        compass = new(allocation) meme::Bf2CompassNode(compassName.c_str(), direction, wrap, snap);
     }
     allocation = ::operator new(sizeof(meme::Bf2TransformNode));
     meme::Bf2TransformNode* transform = allocation

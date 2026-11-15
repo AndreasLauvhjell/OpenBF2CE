@@ -149,6 +149,12 @@ public:
     virtual void toggleOnWeaponLock(IObject*);               // ELF 135 B / PE 89 B s124
     virtual bool checkSpecialToggle(io::PlayerInput);        // s125 BY value, per mangling
     virtual bool checkSpecialToggleLastUpdate(io::PlayerInputMap);   // s126 BY value
+
+    // [CHOSEN, not recovered] Read and replace the special-toggle edge latch, so the client's
+    // prediction replay can edge-test replayed inputs without disturbing the live latch.
+    // issue: TBD
+    bool getSpecialTogglePressed() const { return m_specialTogglePressed; }
+    void setSpecialTogglePressed(bool pressed) { m_specialTogglePressed = pressed; }
     virtual bool getExitPosition(Vec3&);                     // s127 returns _getExitPosition's bool (movzx al)
     virtual bool _getExitPosition(Vec3&, ExitPositionType);  // ELF 581 B / PE 336 B s128 - dice's underscore
     virtual bool getAltExitPosition(Vec3&);                  // s129 copies +0x200, returns 1

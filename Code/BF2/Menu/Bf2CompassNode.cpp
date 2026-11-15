@@ -13,7 +13,7 @@ const float radiansToDegrees = 57.295776f;
 const float oneOverFullTurn = 0.0027777778f;
 }
 
-Bf2CompassNode::Bf2CompassNode(const char* name, int direction, bool snap, bool wrap)
+Bf2CompassNode::Bf2CompassNode(const char* name, int direction, bool wrap, bool snap)
     : Bf2BarNode(nullptr, 3), m_snapTexturePrimary(0), m_snapTextureSecondary(0),
       m_offset(0), m_snapEnabled(snap), m_wrapEnabled(wrap)
 {
@@ -136,14 +136,15 @@ void Bf2CompassNode::paintSelf(System* system, const NodeState* state,
     }
     if (!m_wrapEnabled) return;
 
+    // A negative shift that is too far from the offset for the leading copy
+    // still falls through to the trailing-copy test.
     const float border = static_cast<float>(m_fillRight);
-    if (shift < 0) {
-        if (static_cast<float>(m_offset) - (m_textureRect.width - border) * 0.5f
+    if (shift < 0 &&
+        static_cast<float>(m_offset) - (m_textureRect.width - border) * 0.5f
             <= static_cast<float>(shift)) {
-            strip.x = strip.x - m_textureRect.width + border;
-            Quad wrapped(&strip, bounds);
-            drawContextTexture(context, system, texture, &wrapped);
-        }
+        strip.x = strip.x - m_textureRect.width + border;
+        Quad wrapped(&strip, bounds);
+        drawContextTexture(context, system, texture, &wrapped);
         return;
     }
     if (static_cast<float>(shift) > m_textureRect.width - border - bounds->width &&

@@ -37,7 +37,7 @@ public:
     bool setBarNodeValueVariable(std::string variable);
     bool createCompassNode(std::string parent, std::string name, int direction,
                            int x, int y, int width, int height,
-                           bool snap, bool wrap);
+                           bool wrap, bool snap);
     bool setCompassNodeTexture(int index, std::string texture);
     bool setCompassNodeBorder(int top, int bottom, int left, int right);
     bool setCompassNodeSnapOffset(int a, int b, int c, int d);

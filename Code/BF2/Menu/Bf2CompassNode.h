@@ -7,9 +7,11 @@
 namespace dice { namespace meme {
 class Bf2CompassNode : public Bf2BarNode {
 public:
-    // Defaults [INFERRED] from factory7D01D0, which supplies (null, 3, true, false).
+    // The wrap flag comes before the snap flag, as in the shipped constructor.
+    // Defaults match the class factory, which supplies (null, 3, true, false):
+    // wrapping on, snapping off.
     explicit Bf2CompassNode(const char* name = nullptr, int direction = 3,
-                            bool snap = true, bool wrap = false);
+                            bool wrap = true, bool snap = false);
     ~Bf2CompassNode() override;
     TypeDescriptor* getType() override;
     unsigned int getObjectSize() override;
