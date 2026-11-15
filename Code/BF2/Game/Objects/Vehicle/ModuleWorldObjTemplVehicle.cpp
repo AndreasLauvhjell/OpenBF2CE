@@ -18,6 +18,14 @@ namespace world {
 // template fields directly rather than calling public accessor slots.
 struct VehicleTemplateConsoleAccess
 {
+    // audio.newStyleAudio / audio.transformationRelativeRoot: ELF ConsoleClass100/101 (executors
+    // 0x87922A0 / 0x8792810, byte stores at template +0x670 / +0x671), PE vtable 0x8DBE08 family
+    // (+0x720 / +0x721). Bool arguments, active on any EngineTemplate, no clamps.
+    static bool getNewStyleAudio(EngineTemplate* value) { return value->m_engineSound.m_byte00 != 0; }
+    static void setNewStyleAudio(bool v) { static_cast<EngineTemplate*>(getActiveTemplate(CID_EngineTemplate))->m_engineSound.m_byte00 = v; }
+    static bool getTransformationRelativeRoot(EngineTemplate* value) { return value->m_engineSound.m_byte01 != 0; }
+    static void setTransformationRelativeRoot(bool v) { static_cast<EngineTemplate*>(getActiveTemplate(CID_EngineTemplate))->m_engineSound.m_byte01 = v; }
+
     // newCar2: ELF ConsoleClass112..133 (122/128 are unused), +0x620..0x66C;
     // PE executors 0x521A30..0x523BB0, +0x6D0..0x71C. Direct stores,
     // no clamps; useClutchedTorque is the one bool among nineteen floats.
@@ -426,6 +434,17 @@ BF2_CONSOLE_PROPERTY_FN(trackTurnSpeed, float, activeEngine() != 0,
 BF2_CONSOLE_PROPERTY_FN(remoteEngineInput, io::PlayerInputMap, activeEngine() != 0,
                         objTemplGetRemoteEngineInput(), objTemplSetRemoteEngineInput,
                         kObjTemplVehicleConsoleTag)
+
+// Engine sound placement and style (EngineSoundTemplate at template +0x670). Without
+// transformationRelativeRoot the engine sound follows the engine object itself; a spinning rotor
+// then carries its offset sounds around the hub, which pans them from side to side.
+BF2_CONSOLE_PROPERTY_FN_NAMED("audio.newStyleAudio", bool, activeEngine() != 0,
+                              VehicleTemplateConsoleAccess::getNewStyleAudio(activeEngine()),
+                              VehicleTemplateConsoleAccess::setNewStyleAudio, kObjTemplVehicleConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("audio.transformationRelativeRoot", bool, activeEngine() != 0,
+                              VehicleTemplateConsoleAccess::getTransformationRelativeRoot(activeEngine()),
+                              VehicleTemplateConsoleAccess::setTransformationRelativeRoot,
+                              kObjTemplVehicleConsoleTag)
 
 // Aircraft propulsion/control properties. The existing field/virtual split is preserved;
 // authored damping, lift and gear values must not silently fall back to constructor defaults.
