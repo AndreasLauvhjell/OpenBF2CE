@@ -551,6 +551,9 @@ BF2_CONSOLE_PROPERTY_FN(onlyWhenOccupied, bool, VehicleTemplateConsoleAccess::ac
 // Suspension strength and damping properties. The console accepts set-prefixed aliases.
 BF2_CONSOLE_PROPERTY(strength, float, activeSpring(), setStrength, getStrength, kObjTemplVehicleConsoleTag)
 BF2_CONSOLE_PROPERTY(damping,  float, activeSpring(), setDamping,  getDamping,  kObjTemplVehicleConsoleTag)
+// rotateUV: a plain bool store on the active SpringTemplate. When set, the wheel keeps its mesh
+// orientation and only its UVs turn, so track pieces bound to the wheel's geometry part stay put.
+BF2_CONSOLE_FIELD(rotateUV, bool, activeSpring(), m_rotateUV, kObjTemplVehicleConsoleTag)
 
 // FloatingBundle ConsoleClass148..151: direct float stores, with no range clamp or side effect.
 
