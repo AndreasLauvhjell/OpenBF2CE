@@ -5,6 +5,7 @@
 
 // static init: ELF 0x2C7270 (__tcf_0 0x2C72D0, _GLOBAL__I 0x2C7300): <iostream>'s Init object only.
 #include <iostream>
+#include <cmath>
 
 #include "EntryTrigger.h"
 
@@ -12,6 +13,7 @@
 #include "../Main/AISettingsInterfaces.h"
 #include "../Main/CommonSingletonServer.h"
 #include "../Main/IBotManager.h"
+#include "../Main/SniperTuning.h"            // [CHOSEN, not recovered] mod/bot-sniper
 #include "../AIBot/BotMain.h"
 #include "../AIBotActionPlan/BAPATrigger.h"
 #include "../AIBotActionPlan/BAPCondition.h"
@@ -146,8 +148,38 @@ bool EntryTrigger::execute(BotScript* script, Bot* bot, bool& ok, bool& done)
                 && IBotManager::instance->getBot(target->getAIObject()) == 0
                 && target->getUnit() != 0 && target->getUnit()->isOccupied())
                 humanVehicle = true;
+            // [CHOSEN, not recovered] mod/bot-sniper: retail evaluates this sniper test and drops
+            // getMaxRange(). The mod uses it for a range-normalized spread: the deviation is
+            // scaled by ref / clamp(d, ref, holdDistance), so a sniper shot out to its preferred
+            // range has the angular hit chance of a shot at `ref` (30 m). Every other weapon gets
+            // scale 1, written on every fire trigger so no stale value survives a weapon change.
+            SniperShotInfo sniperShot = { 1.0f, -1.0f, -1.0f, false };
             if (weapon->getWeaponZoom() != io::PINone && bot->getSpawnKit() == 1)
-                weapon->getMaxRange();   // retail: the result is dropped
+            {
+                const float maxRange = weapon->getMaxRange();
+                if (target != 0 && weapon->getExplosionRadius() == 0.0f)
+                {
+                    const SniperTuning& tuning = sniperTuning();
+                    const float minRange = weapon->getMinRange();
+                    const float holdDistance =
+                        minRange + (maxRange - minRange) * weapon->getOptimalRangePercentage() * 0.01f;
+                    const Vec3& from = info->getPosition();
+                    const Vec3& to = target->getPosition();
+                    const float dx = to.x - from.x;
+                    const float dy = to.y - from.y;
+                    const float dz = to.z - from.z;
+                    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    const float reference = tuning.referenceRange;
+                    float clamped = distance < holdDistance ? distance : holdDistance;
+                    if (clamped < reference)
+                        clamped = reference;
+                    if (tuning.accuracyFix && reference > 0.0f)
+                        sniperShot.scale = reference / clamped;
+                    sniperShot.distance = distance;
+                    sniperShot.holdDistance = holdDistance;
+                }
+            }
+            weapon->getWeapon()->setSniperShotInfo(sniperShot);
             if (!weapon->getIsThrown())
             {
                 if (weapon->getExplosionRadius() == 0.0f)

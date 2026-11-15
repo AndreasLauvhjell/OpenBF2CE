@@ -93,6 +93,8 @@ public:
     virtual bool hasTargetLocked() const;                       // +0x124
     virtual IAIObject* getLockedTarget() const;                 // +0x128
     virtual const std::string& getName() const;                 // +0x12C
+    virtual void setSniperShotInfo(const SniperShotInfo& info); // [CHOSEN, not recovered]
+    virtual const SniperShotInfo& getSniperShotInfo() const;    // [CHOSEN, not recovered]
 
     // non-virtual
     WeaponGuidingSystem targetSystemToWeaponGuidingSystem(world::TargetSystem system) const;
@@ -107,6 +109,9 @@ private:
     /* +0x10 */ unsigned int m_information[3];
     /* +0x1C */ double m_timeOfFiring;
     /* +0x24 */ world::IObject* m_object;
+    // [CHOSEN, not recovered] Appended after the retail fields; the object is created and
+    // destroyed only by the engine image, so its size is not an AI-image contract.
+    SniperShotInfo m_sniperShot;
 };
 
 } // namespace ai

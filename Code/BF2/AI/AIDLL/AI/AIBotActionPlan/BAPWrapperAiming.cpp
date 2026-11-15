@@ -16,6 +16,8 @@
 #include "../AIUtils/WeaponInfoManager.h"
 #include "../Main/AIDllFrontier.h"
 #include "../Main/CommonSingletonServer.h"
+#include "../Main/SniperTuning.h"                      // [CHOSEN, not recovered] mod/bot-sniper
+#include "../../../../IO/Input/PlayerInput.h"
 #include "../../../AIInterface/BFKnowledge/BFPhysics.h"
 #include "../../../AIInterface/BFKnowledge/BFTerrain.h"
 
@@ -36,6 +38,15 @@ Vec3 sensedWorldPoint(Information* target, const SensedObject* sensed)
     return bapinline::vec3(t.m[8] * l.z + t.m[0] * l.x + t.m[4] * l.y + t.m[12],
                            t.m[1] * l.x + t.m[5] * l.y + t.m[9] * l.z + t.m[13],
                            l.x * t.m[2] + l.y * t.m[6] + l.z * t.m[10] + t.m[14]);
+}
+
+// [CHOSEN, not recovered] mod/bot-sniper: the chest of a standing soldier, 0.17 above its origin.
+// That is the height retail bots already aim at on a standing human (camera 0.47 - 0.3), so a
+// sniper now treats bot and human targets alike.
+Vec3 sniperChestPoint(Information* target)
+{
+    const Mat4& t = target->getTransformation();
+    return bapinline::vec3(t.m[12], t.m[13] + 0.17f, t.m[14]);
 }
 
 } // namespace
@@ -131,11 +142,21 @@ bool BAPWrapperAiming::execute(Bot* bot, bool& ok, bool& done)
     // Soldier against soldier: short-range weapons aim 0.2 lower, others 0.3 lower at a standing
     // target.
     float yOffset = 0.0f;
+    bool sniperChest = false;
     if (self->isOfType(ITSoldier) && target->isOfType(ITSoldier)) {
         if (weapon->getMaxRange() < 10.0f)
             yOffset = -0.2f;
-        else if (target->getSoldierPose() == SPStanding)
+        else if (target->getSoldierPose() == SPStanding) {
             yOffset = -0.3f;
+            // [CHOSEN, not recovered] mod/bot-sniper: a sniper (zoom weapon, sniper kit) aims at a
+            // standing soldier's chest instead of the retail point, which for an active bot
+            // target is the soldier centre minus 0.3 (pelvis).
+            if (sniperTuning().aimChest && weapon->getWeaponZoom() != io::PINone
+                && bot->getSpawnKit() == 1 && weapon->getExplosionRadius() == 0.0f) {
+                sniperChest = true;
+                yOffset = 0.0f;
+            }
+        }
     }
 
     SensedObject* sensed = bot->getSensedObjectFromHandle(m_target);
@@ -195,6 +216,8 @@ bool BAPWrapperAiming::execute(Bot* bot, bool& ok, bool& done)
         float level;
         if (getGroundLevelAtPos(bot, point, level))
             point.y = level;
+    } else if (sniperChest) {
+        point = sniperChestPoint(target);   // [CHOSEN, not recovered] mod/bot-sniper
     } else if (!(sensed->m_flags & 2u) || (sensed->m_flags & 8u)) {
         point.y = yOffset + point.y;
     } else {

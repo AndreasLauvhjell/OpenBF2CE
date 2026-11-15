@@ -43,6 +43,7 @@
 #include "IAIPathfinding.h"
 #include "IBotManager.h"
 #include "StrategyManager.h"
+#include "SniperTuning.h"                // [CHOSEN, not recovered] mod/bot-sniper
 #include "../AIStrategicEntity/UserOrders/UserOrderManager.h"
 
 namespace dice {
@@ -159,6 +160,7 @@ std::ios_base::Init consoleStreamInit;
 ConsoleObjects::ConsoleObjectList aiList;
 
 #include "AIModuleConsole.inc"
+#include "AIModuleSniperConsole.inc"     // [CHOSEN, not recovered] mod/bot-sniper
 
 } // anonymous namespace
 

@@ -7,6 +7,7 @@
 #include <string>
 
 #include "../GenericFireArm.h"
+#include "../../../../AI/AIInterface/BFKnowledge/IWeapon.h"   // [CHOSEN, not recovered] mod/bot-sniper
 #include "../../ObjectLayoutAccess.h"
 #include "../../IObject.h"
 #include "../../IPlayer.h"
@@ -25,6 +26,16 @@ namespace {
 
 bool g_normalTableInitialized = false;
 float g_normalTable[1024];
+
+// [CHOSEN, not recovered] mod/bot-sniper: the sniper tuning the AI image stored on the weapon's AI
+// component (ai::WeaponObject), or null when the weapon has none.
+const ai::SniperShotInfo* aiSniperShot(GenericFireArm* weapon)
+{
+    IBase* const component = weapon->queryComponent(ai::IID_IWeapon, ai::IID_IWeapon);
+    if (!component)
+        return 0;
+    return &static_cast<ai::IWeapon*>(component)->getSniperShotInfo();
+}
 
 } // anonymous namespace
 
@@ -89,14 +100,23 @@ void DeviationComp::postFire(WeaponFireEvent& event)
     std::string gameMode;
     if (game)
         gameMode = game->getCurrentMapGameMode();
-    if (compareIgnoreCase(gameMode, std::string("gpm_coop")) == 0)
+    const ai::SniperShotInfo* sniperShot = 0;   // [CHOSEN, not recovered] mod/bot-sniper
+    const bool coop = compareIgnoreCase(gameMode, std::string("gpm_coop")) == 0;
+    if (coop)
     {
         GenericFireArm* const weapon = firearm();
         if (weapon)
         {
             IPlayer* const player = weapon->getPlayer();
             if (player && player->getIsAIPlayer())
+            {
                 deviation = (100.0f - serverSettings->getCoopBotDifficulty()) / 10.0f;
+                // [CHOSEN, not recovered] mod/bot-sniper: the AI image's range scale for a sniper
+                // shot (exactly 1 for every other weapon, leaving the retail value bit-identical).
+                sniperShot = aiSniperShot(weapon);
+                if (sniperShot)
+                    deviation *= sniperShot->scale;
+            }
         }
     }
 

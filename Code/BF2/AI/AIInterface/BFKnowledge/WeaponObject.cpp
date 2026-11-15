@@ -55,6 +55,10 @@ WeaponObject::WeaponObject(WeaponTemplate* weaponTemplate)
     m_information[0] = kNoInformation;
     m_information[1] = kNoInformation;
     m_information[2] = kNoInformation;
+    // [CHOSEN, not recovered] Neutral sniper tuning: scale 1 leaves every deviation as retail.
+    m_sniperShot.scale = 1.0f;
+    m_sniperShot.distance = -1.0f;
+    m_sniperShot.holdDistance = -1.0f;
 }
 
 // the vptr store only - the information handles are not freed.
@@ -459,7 +463,9 @@ void WeaponObject::setBotSkill(float skill, double since, float scale)
     const float deviation = static_cast<float>(
         ((((1.0 - t) + 1.0) * 0.5) * (1.0 - static_cast<double>(skill))) *
         static_cast<double>(m_template->m_deviation) * static_cast<double>(scale));
-    m_weaponObject->setAIDeviation(deviation);                                         // +0xD0
+    // [CHOSEN, not recovered] Sniper range scale (mod/bot-sniper). It is exactly 1 for every
+    // other weapon, so their AI deviation stays bit-identical to retail.
+    m_weaponObject->setAIDeviation(deviation * m_sniperShot.scale);                    // +0xD0
 }
 
 // lock the firearm onto the object behind a target id.
@@ -489,6 +495,19 @@ const std::string& WeaponObject::getName() const
 {
     return static_cast<world::IObject*>(m_weaponObject->queryInterface(world::IID_IObject))
         ->getTemplate()->getName();
+}
+
+// [CHOSEN, not recovered] Stores the AI image's sniper tuning for the next shots of this weapon.
+// setBotSkill and DeviationComp::postFire read it.
+void WeaponObject::setSniperShotInfo(const SniperShotInfo& info)
+{
+    m_sniperShot = info;
+}
+
+// [CHOSEN, not recovered] The tuning last stored by setSniperShotInfo (scale 1 until then).
+const SniperShotInfo& WeaponObject::getSniperShotInfo() const
+{
+    return m_sniperShot;
 }
 
 } // namespace ai

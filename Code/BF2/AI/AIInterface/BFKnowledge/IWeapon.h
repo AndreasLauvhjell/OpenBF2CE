@@ -18,6 +18,19 @@ namespace ai {
 
 class IAIObject;
 
+// [CHOSEN, not recovered] Own-use bot sniper tuning (mod/bot-sniper, no upstream issue). The AI
+// image fills this for the weapon it is about to fire; the engine reads it when the shot leaves
+// the weapon. `scale` multiplies the bot's AI deviation and the co-op difficulty deviation; it is
+// 1 for every weapon except a zoomed sniper-kit weapon. `distance` is the target distance at the
+// trigger and `holdDistance` the weapon's preferred range; both are negative when the shot is not
+// a sniper shot.
+struct SniperShotInfo
+{
+    float scale;
+    float distance;
+    float holdDistance;
+};
+
 class IWeapon : public world::IObjectComponent
 {
 public:
@@ -83,6 +96,12 @@ public:
     virtual bool hasTargetLocked() const = 0;                                   // +0x124
     virtual IAIObject* getLockedTarget() const = 0;                             // +0x128
     virtual const std::string& getName() const = 0;                             // +0x12C
+
+    // [CHOSEN, not recovered] Appended after the retail slots so every recovered offset above
+    // stays put on PE and ELF. An AI image built with these slots needs an engine built with
+    // them: the retail engine's vtable ends at getName.
+    virtual void setSniperShotInfo(const SniperShotInfo& info) = 0;            // +0x130 (PE)
+    virtual const SniperShotInfo& getSniperShotInfo() const = 0;                // +0x134 (PE)
 };
 
 } // namespace ai
