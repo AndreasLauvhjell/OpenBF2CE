@@ -3,6 +3,7 @@
 #include "HudWidescreen.h"
 #include <list>
 #if !DEDICATED
+#include "HudCanvasAnchor.h"
 #include "../Game/IGameLogic.h"
 #include "../Game/IGame.h"
 #include "../Game/GameLogic/CombatArea.h"
@@ -5325,6 +5326,11 @@ static_assert(sizeof(Bf2MenuMapNodeTypeDescriptor) == 16, "client BF2 map metada
 // Stores the minimap position, requests recentering and returns true.
 bool Bf2MenuMapNode::setMiniPosForHud(float x, float y)
 {
+    // [CHOSEN, not recovered] Widescreen HUD anchoring: the minimap position is centre relative,
+    // so convert to top-left 800x600 HUD coordinates to pick its corner.
+    const hfe::Vec2 delta = hfe::hud::hudAnchorRectDelta(x + 400.0f, y + 300.0f, m_field798.x, m_field798.y);
+    x += delta.x;
+    y += delta.y;
     m_field788.x = x;
     m_field788.y = y;
     mapRecenterForCommander(x, y);

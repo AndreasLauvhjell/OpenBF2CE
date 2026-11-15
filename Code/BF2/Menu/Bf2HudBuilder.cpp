@@ -32,6 +32,8 @@
 #include "Bf2ObjectMarkerNode.h"
 #include "Bf2ObjectSelectionNode.h"
 #include "Bf2TransformNode.h"
+#include "HudCanvasAnchor.h"
+#include "Ref2System.h"
 #include "../Core/Debug.h"
 #include "../Core/StringUtil.h"
 #include "../Game/HudInformationLayer.h"
@@ -50,6 +52,11 @@
 #include "../External/BFMeme/Node.h"
 #include "../External/BFMeme/TypeDescriptor.h"
 #include <new>
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <unordered_map>
+#include <vector>
 namespace dice { namespace hfe { namespace hud {
 namespace {
 const char* const builderSource =
@@ -1825,6 +1832,7 @@ bool Bf2HudBuilder::registerNode(std::string parent, meme::Node* node, meme::Obj
     m_field050 = "NULL";
     if (!m_system || !insertNode(parent, node, mode) || !node ||
         !m_system->registerObject(node, nullptr)) return false;
+    hudAnchorRecordNode(parent, node); // [CHOSEN, not recovered] widescreen HUD anchoring
     if (data && m_system->registerObject(data, nullptr)) {
         if (!setActiveObject(parent, std::string(data->getName()))) return false;
         if (node->slot_0x24()) m_field050 = node->getName();
@@ -2462,6 +2470,211 @@ bool Bf2HudBuilder::setSliderNodeChild(std::string name)
     Debug(DebugTypeError, builderSource, 786, "")
         << "Failed adding child - " << name << " to sliderNode: " << m_field018;
     return false;
+}
+
+// [CHOSEN, not recovered] Widescreen HUD anchoring, see HudCanvasAnchor.h.
+namespace {
+struct HudAnchorRecord
+{
+    std::string parent;      // lower case
+    std::string name;        // lower case, empty for unnamed nodes
+    meme::Node* node;
+    bool positioned;         // a Bf2TransformNode (every create row except splits wraps one)
+};
+
+std::vector<HudAnchorRecord>& hudAnchorRecords()
+{
+    static std::vector<HudAnchorRecord> records;
+    return records;
+}
+
+std::string hudAnchorLower(std::string text)
+{
+    for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+}
+
+bool hudAnchorIsTransform(meme::Node* node)
+{
+    for (meme::TypeDescriptor* type = node->getType(); type; type = type->getBaseType())
+        if (type == meme::Bf2TransformNode::getClassType()) return true;
+    return false;
+}
+
+// The retail 800x600 HUD space the scripts are written for, and the extra canvas around it.
+float hudRefW() { return 800.0f; }
+float hudRefH() { return 600.0f; }
+float hudAnchorMarginX() { return (menu::Ref2System::hudCanvasWidth() - hudRefW()) * 0.5f; }
+float hudAnchorMarginY() { return (menu::Ref2System::hudCanvasHeight() - hudRefH()) * 0.5f; }
+
+// Built-in HUD areas from the Ingame scene, with the edge they belong to.
+struct HudAnchorArea { const char* name; float sideX; float sideY; };
+const HudAnchorArea hudAnchorAreas[] = {
+    {"topleft", -1, -1}, {"topright", 1, -1}, {"top", 0, -1}, {"left", -1, 0},
+    {"bottomleftstatic", -1, 1}, {"bottomleftanimate", -1, 1},
+    {"bottomrightstatic", 1, 1}, {"bottomrightanimate", 1, 1},
+};
+
+// Groups left in place: the spawn screen, commander screen and other full-screen menus.
+const char* const hudAnchorIgnored[] = {
+    "spawnmenu", "mapsplit", "mapmenu", "choicemenu",
+    "commanderinterfacebottom", "commanderinterfaceleft", "commanderinterfacetop",
+    "commanderinterfacemap", "commandermenu", "commanderradio", "issueordermenu",
+    "squadleadermenu", "squadmembersnew", "membersselectioninfo", "scoreboard",
+};
+
+bool hudAnchorIsIgnored(const std::string& name)
+{
+    for (const char* ignored : hudAnchorIgnored)
+        if (name == ignored) return true;
+    return false;
+}
+
+void hudAnchorMove(meme::Node* node, const hfe::Vec2& delta)
+{
+    if (delta.x == 0.0f && delta.y == 0.0f) return;
+    meme::Bf2TransformNode* transform = static_cast<meme::Bf2TransformNode*>(node);
+    transform->getPosition().x += delta.x;
+    transform->getPosition().y += delta.y;
+    hudAnchorFrameDeltas()[transform] = delta; // used only while a position variable is bound
+}
+} // namespace
+
+hfe::Vec2 hudAnchorRectDelta(float x, float y, float width, float height)
+{
+    hfe::Vec2 delta = {0.0f, 0.0f};
+    float sideX = 0.0f, sideY = 0.0f;
+    const float refW = hudRefW(), refH = hudRefH();
+    // Cross rule: a rectangle fully on one side of a centre line moves to that side.
+    if (x >= refW * 0.5f) sideX = 1.0f;
+    else if (x + width <= refW * 0.5f) sideX = -1.0f;
+    if (y >= refH * 0.5f) sideY = 1.0f;
+    else if (y + height <= refH * 0.5f) sideY = -1.0f;
+    // A rectangle touching exactly one screen edge belongs to that edge, whatever its centre says.
+    // Chat and message lists start at x = 0 but are far wider than their left-aligned text.
+    const bool touchLeft = x <= 20.0f, touchRight = x + width >= refW - 20.0f;
+    if (touchLeft != touchRight) sideX = touchLeft ? -1.0f : 1.0f;
+    const bool touchTop = y <= 20.0f, touchBottom = y + height >= refH - 20.0f;
+    if (touchTop != touchBottom) sideY = touchTop ? -1.0f : 1.0f;
+    if (width >= refW - 20.0f) sideX = 0.0f;   // full-width layers stay centred
+    if (height >= refH - 20.0f) sideY = 0.0f;
+    // A full-height box that is not full width and starts at the top edge is a list hung from
+    // the top (ChatList 0 5 505 600 holds the chat and kill messages): its text grows down from
+    // the top, so it belongs to the top edge.
+    if (touchTop && touchBottom && width < refW - 20.0f) sideY = -1.0f;
+    delta.x = sideX * hudAnchorMarginX();
+    delta.y = sideY * hudAnchorMarginY();
+    return delta;
+}
+
+void hudAnchorRecordNode(const std::string& parent, meme::Node* node)
+{
+    const char* name = node->slot_0x24() ? node->getName() : nullptr;
+    hudAnchorRecords().push_back({hudAnchorLower(parent), hudAnchorLower(name ? name : ""),
+                                  node, hudAnchorIsTransform(node)});
+}
+
+void hudAnchorApply(meme::System*)
+{
+    menu::Ref2System::lockHudCanvas(); // the scripts have run: the canvas is final
+
+    // The Ingame scene's nodes keep their 800x600 hit rectangles; widen them over the whole canvas so
+    // buttons moved out to the edges still receive the pointer.
+    float* expand = hudSceneHitExpand();
+    expand[0] = expand[2] = hudAnchorMarginX();
+    expand[1] = expand[3] = hudAnchorMarginY();
+    std::vector<HudAnchorRecord>& records = hudAnchorRecords();
+    std::unordered_map<std::string, size_t> byName;
+    for (size_t i = 0; i < records.size(); ++i)
+        if (!records[i].name.empty()) byName.emplace(records[i].name, i); // first creation wins
+
+    // Classify every node with no positioned ancestor by its root area and nearest group.
+    struct Unit { std::vector<size_t> members; float left, top, right, bottom; };
+    std::unordered_map<std::string, Unit> groups;
+    int areaMoved = 0, ignored = 0, markersScaled = 0;
+    for (size_t i = 0; i < records.size(); ++i) {
+        if (!records[i].positioned) continue;
+        bool top = true, skip = false;
+        std::string root = records[i].parent;
+        int depth = 0;
+        for (auto it = byName.find(root); it != byName.end() && depth++ < 64; it = byName.find(root)) {
+            const HudAnchorRecord& ancestor = records[it->second];
+            if (ancestor.positioned) { top = false; break; }
+            if (hudAnchorIsIgnored(ancestor.name)) skip = true;
+            root = ancestor.parent;
+        }
+        if (!top) continue;
+        if (skip) { ++ignored; continue; }
+
+        meme::Bf2TransformNode* transform = static_cast<meme::Bf2TransformNode*>(records[i].node);
+
+        // Lock markers are only drawn strictly inside their node's rectangle. Scale that rectangle
+        // about the screen centre so it covers the same share of the screen as retail at 16:9.
+        if (meme::Node* child = transform->getChild(1)) {
+            meme::TypeDescriptor* type = child->getType();
+            if (type == meme::Bf2ObjectMarkerNode::getClassType()
+                    || type == meme::Bf2ObjectSelectionNode::getClassType()) {
+                const float scaleX = menu::Ref2System::hudCanvasWidth() / hudRefW();
+                const float scaleY = menu::Ref2System::hudCanvasHeight() / hudRefH();
+                hfe::Vec2& position = transform->getPosition();
+                hfe::Vec2& size = transform->getSize();
+                position.x = hudRefW() * 0.5f + (position.x - hudRefW() * 0.5f) * scaleX;
+                position.y = hudRefH() * 0.5f + (position.y - hudRefH() * 0.5f) * scaleY;
+                size.x *= scaleX;
+                size.y *= scaleY;
+                ++markersScaled;
+                continue;
+            }
+        }
+
+        bool inArea = false;
+        for (const HudAnchorArea& area : hudAnchorAreas) {
+            if (root != area.name) continue;
+            // The areas sit at fixed 800x600 positions in the Ingame scene: move them to their edge.
+            const hfe::Vec2 delta = {area.sideX * hudAnchorMarginX(), area.sideY * hudAnchorMarginY()};
+            hudAnchorMove(records[i].node, delta);
+            ++areaMoved;
+            inArea = true;
+        }
+        if (inArea || root != "global") continue;
+
+        // A node directly under Global is its own group; otherwise its parent split is the group.
+        const std::string key = records[i].parent == "global" ? "#" + std::to_string(i) : records[i].parent;
+        const float x = transform->getPosition().x, y = transform->getPosition().y;
+        const float w = transform->getSize().x, h = transform->getSize().y;
+        auto found = groups.find(key);
+        if (found == groups.end()) {
+            groups[key] = Unit{{i}, x, y, x + w, y + h};
+        } else {
+            Unit& unit = found->second;
+            unit.members.push_back(i);
+            unit.left = (std::min)(unit.left, x); unit.top = (std::min)(unit.top, y);
+            unit.right = (std::max)(unit.right, x + w); unit.bottom = (std::max)(unit.bottom, y + h);
+        }
+    }
+
+    // A large group spanning most of the screen is a container of unrelated nodes: anchor each
+    // member. Small spanning groups (a label and its value) stay together.
+    int groupMoved = 0, nodeMoved = 0;
+    for (auto& entry : groups) {
+        Unit& unit = entry.second;
+        const bool container = unit.members.size() > 4
+            && (unit.right - unit.left > hudRefW() * 0.75f || unit.bottom - unit.top > hudRefH() * 0.75f);
+        if (!container) {
+            const hfe::Vec2 delta = hudAnchorRectDelta(unit.left, unit.top,
+                unit.right - unit.left, unit.bottom - unit.top);
+            for (size_t i : unit.members) hudAnchorMove(records[i].node, delta);
+            ++groupMoved;
+            continue;
+        }
+        for (size_t i : unit.members) {
+            meme::Bf2TransformNode* transform = static_cast<meme::Bf2TransformNode*>(records[i].node);
+            hudAnchorMove(records[i].node, hudAnchorRectDelta(transform->getPosition().x,
+                transform->getPosition().y, transform->getSize().x, transform->getSize().y));
+            ++nodeMoved;
+        }
+    }
+    records.clear();
 }
 
 #if defined(_M_IX86)

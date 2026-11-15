@@ -16,6 +16,9 @@
 #include "../IO/File/FileManager.h"
 #include "Font.h"
 #include "HudWidescreen.h"
+#include "../Game/Main/BF2Window.h"
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -383,14 +386,82 @@ float Ref2System::getTextureHeight(meme::TextureHandle handle)
     return handle ? static_cast<float>(reinterpret_cast<geom::IMemeTexture*>(handle)->getPixelHeight()) : 0.0f;
 }
 
-// Repeated retail calls retained; issue #33 optionally widens the 800x600 projection.
+namespace {
+// [CHOSEN, not recovered] Widescreen HUD canvas.
+//
+// The ortho view. Its pixels per HUD unit come from the game window's client size so the canvas
+// is at least 1280x720 and follows the window's aspect (16:9 gets 1280x720 at 1.5x, 2x and 3x,
+// 16:10 gets 1280x800, 21:9 and 32:9 get extra width); 4:3 or narrower screens keep retail 800x600.
+// The 800x600 HUD space stays unstretched and centred in it. The size stays open until the HUD
+// scripts have run and is then locked, so the anchor pass and the ortho view agree; a later
+// resolution change is not followed.
+bool hudLocked = false;
+
+#if defined(_WIN32)
+// Finds the largest visible top-level window of this process, for when mainWindow is not published.
+BOOL CALLBACK hudCanvasFindWindow(HWND window, LPARAM found)
+{
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    if (process != GetCurrentProcessId() || !IsWindowVisible(window)) return TRUE;
+    RECT client = {0, 0, 0, 0}, best = {0, 0, 0, 0};
+    HWND& result = *reinterpret_cast<HWND*>(found);
+    GetClientRect(window, &client);
+    if (result) GetClientRect(result, &best);
+    if (client.right * client.bottom > best.right * best.bottom) result = window;
+    return TRUE;
+}
+
+const hfe::Vec2& hudCanvasSize()
+{
+    static hfe::Vec2 size = {0.0f, 0.0f};
+    static hfe::Vec2 open = {0.0f, 0.0f};
+    // [CHOSEN, not recovered] kr4uzi's +widescreenHud (issue #33) replaces this canvas: while it is
+    // requested the retail 800x600 view stays and his HUD widens the projection instead.
+    static const hfe::Vec2 retail = {800.0f, 600.0f};
+    if (hud::widescreen::active()) return retail;
+    if (size.x > 0.0f) return size;
+    open = {1280.0f, 720.0f};
+    HWND window = hfe::mainWindow ? hfe::mainWindow->getHwnd() : nullptr;
+    if (!window) EnumWindows(hudCanvasFindWindow, reinterpret_cast<LPARAM>(&window));
+    RECT client = {0, 0, 0, 0};
+    if (!window || !GetClientRect(window, &client) || client.right <= 0 || client.bottom <= 0)
+        return open; // not cached: asked again once the window exists
+    const float width = static_cast<float>(client.right), height = static_cast<float>(client.bottom);
+    const float scale = (std::min)(width / open.x, height / open.y);
+    open = {width / scale, height / scale};
+    if (width / height <= 4.0f / 3.0f + 0.01f)
+        open = {800.0f, 600.0f};
+    if (!hudLocked) return open;
+    size = open;
+    return size;
+}
+#else
+// Other ports have no window lookup here yet and keep the retail 800x600 view.
+const hfe::Vec2& hudCanvasSize()
+{
+    static const hfe::Vec2 size = {800.0f, 600.0f};
+    return size;
+}
+#endif
+}
+float Ref2System::hudCanvasWidth() { return hudCanvasSize().x; }
+float Ref2System::hudCanvasHeight() { return hudCanvasSize().y; }
+void Ref2System::lockHudCanvas()
+{
+    hudLocked = true;
+}
+
+// Repeated retail calls retained; the 800x600 size is widened by our canvas or by issue #33.
 void Ref2System::prepareRenderView()
 {
     static_cast<dx9rend::IRenderView*>(m_renderView)->setProjectionMode(1);
     static_cast<dx9rend::IRenderView*>(m_renderView)->setNearPlane(0.01f);
     static_cast<dx9rend::IRenderView*>(m_renderView)->setFarPlane(1.0f);
-    static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoWidth(hud::widescreen::width(this));
-    static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoHeight(600.0f);
+    // Our canvas while kr4uzi's +widescreenHud is off; his width (issue #33) while it is requested.
+    static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoWidth(
+        hud::widescreen::active() ? hud::widescreen::width(this) : hudCanvasWidth());   // retail 800.0f
+    static_cast<dx9rend::IRenderView*>(m_renderView)->setOrthoHeight(hudCanvasHeight()); // retail 600.0f
     m_previousRenderView = static_cast<dx9rend::IRenderer*>(m_renderer)->getRenderView();
 }
 

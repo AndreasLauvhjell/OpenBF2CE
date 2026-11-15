@@ -65,6 +65,7 @@ bool setRequested(const std::string& value)
     return true;
 }
 bool requested() { return s_requested; }
+bool active() { return s_requested && s_vanilla; }
 void configureMod(const std::string& modPath)
 {
     std::string path = modPath;

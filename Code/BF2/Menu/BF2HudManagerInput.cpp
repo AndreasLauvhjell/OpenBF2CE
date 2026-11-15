@@ -156,10 +156,16 @@ void BF2HudManager::handleGameInput(float /*delta*/, io::GameInput& input)
     int sensitivity = m_field180;
     const float y = (input.mappingFlags & 0x200000u) ? input.inputs[21] : 0.0f;
     const float x = (input.mappingFlags & 0x100000u) ? input.inputs[20] : 0.0f;
-    meme::Rect bounds = {-400.0f, -300.0f, 800.0f, 600.0f, 0.0f};
-    // [CHOSEN, not recovered] Issue #33: the pointer may reach both widened screen edges.
-    bounds.width = widescreen::width(ref2System);
-    bounds.x = -0.5f * bounds.width;
+    // [CHOSEN, not recovered] Widescreen HUD: the cursor reaches the edges of the wider
+    // canvas. Retail bounds are -400, -300, 800, 600. Our canvas is 800x600 while kr4uzi's
+    // +widescreenHud is requested; his widening applies then (issue #33).
+    meme::Rect bounds = {menu::Ref2System::hudCanvasWidth() * -0.5f, menu::Ref2System::hudCanvasHeight() * -0.5f,
+                         menu::Ref2System::hudCanvasWidth(), menu::Ref2System::hudCanvasHeight(), 0.0f};
+    if (widescreen::active()) {
+        // [CHOSEN, not recovered] Issue #33: the pointer may reach both widened screen edges.
+        bounds.width = widescreen::width(ref2System);
+        bounds.x = -0.5f * bounds.width;
+    }
     // Do not cache getMode: every comparison is a separate retail virtual call.
     if (getMode() == 3 || getMode() == 4 || getMode() == 5 || getMode() == 7
             || getMode() == 8 || getMode() == 30 || getMode() == 31) {

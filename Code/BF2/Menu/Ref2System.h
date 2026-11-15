@@ -25,6 +25,15 @@ public:
 class Ref2System : public meme::System
 {
 public:
+    // [CHOSEN, not recovered] Widescreen HUD: retail uses a fixed 800x600 ortho view. The canvas
+    // follows the game window: one HUD unit covers a whole number of pixels where possible
+    // (2560x1440 and 3840x2160 give 1280x720, 2560x1600 gives 1280x800, 3440x1440 gives 1720x720,
+    // 5120x1440 gives 2560x720), and the 800x600 HUD space stays unstretched and centred.
+    static float hudCanvasWidth();
+    static float hudCanvasHeight();
+    // Fixes the canvas size after the HUD scripts have run.
+    static void lockHudCanvas();
+
     Ref2System(float width, float height);
     ~Ref2System() override;
     meme::TypeDescriptor* getType() override;

@@ -5,6 +5,7 @@
 #include "../Math/PortableX87.h"
 #endif
 #if !DEDICATED
+#include "HudCanvasAnchor.h"
 #include "../External/BFMeme/Data.h"
 #include "../External/BFMeme/NodeState.h"
 #include "../External/BFMeme/Stream.h"
@@ -227,9 +228,14 @@ bool BfTransformNode::update(System* system, const NodeState* state,
     bool inside = false;
     if (state->target < 0.0f) {
         const float* pointer = system->getPointerPosition();
-        inside = !(pointer[0] < transformed.x) && !(pointer[1] < transformed.y)
-            && sumNotLess(transformed.width, transformed.x, pointer[0])
-            && sumNotLess(transformed.height, transformed.y, pointer[1]);
+        // [CHOSEN, not recovered] Widescreen HUD: widen the hit rectangle over the canvas.
+        const float* expand = hfe::hud::hudSceneHitExpand();
+        const Rect hit = {transformed.x - expand[0], transformed.y - expand[1],
+            transformed.width + expand[0] + expand[2], transformed.height + expand[1] + expand[3],
+            transformed.z};
+        inside = !(pointer[0] < hit.x) && !(pointer[1] < hit.y)
+            && sumNotLess(hit.width, hit.x, pointer[0])
+            && sumNotLess(hit.height, hit.y, pointer[1]);
     }
     const bool enabled = stateEnabled(state->target);
     updateNodeState(&m_transformedState, system, m_transformedChild, this,

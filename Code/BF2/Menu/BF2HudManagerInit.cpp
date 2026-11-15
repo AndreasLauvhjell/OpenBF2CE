@@ -6,6 +6,7 @@
 #include "Ref2System.h"
 #include "HudWidescreen.h"
 #include "Bf2HudBuilder.h"
+#include "HudCanvasAnchor.h"
 #include "BfListBoxData.h"
 #include "BfEditData.h"
 #include "HudQuestionManager.h"
@@ -190,6 +191,8 @@ bool BF2HudManager::init()
     if (m_field0fc) {
         ref2System->loadMenu("Menu/InGame",nullptr);
         runHudScript("Menu/HUD/HudSetup/HudSetupMain.con");
+        // [CHOSEN, not recovered] widescreen HUD anchoring; off while kr4uzi's +widescreenHud is active (mods/bf2 only).
+        if (!widescreen::active()) hudAnchorApply(ref2System);
         runHudScript("Menu/Nametag/nametags.con");
         const meme::TextureHandle texture=ref2System->loadTexture("Ingame/GeneralIcons/full.tga",true);
         ref2System->setDefaultTexture(texture);

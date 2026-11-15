@@ -7,6 +7,7 @@
 #endif
 #if !DEDICATED
 #include "Bf2ButtonNode.h"
+#include "HudCanvasAnchor.h"
 #include "../External/BFMeme/NodeState.h"
 #include "../External/BFMeme/Style.h"
 #include "../External/BFMeme/System.h"
@@ -168,6 +169,14 @@ bool Bf2TransformNode::update(System* system, const NodeState* state,
 {
     if (m_positionX) m_position.x = static_cast<float>(*m_positionX);
     if (m_positionY) m_position.y = static_cast<float>(*m_positionY);
+    // [CHOSEN, not recovered] Widescreen HUD anchoring: a bound position is rewritten every
+    // frame, so the anchor move is added again after the binding.
+    if (m_positionX || m_positionY) {
+        if (const hfe::Vec2* delta = hfe::hud::hudAnchorFrameDelta(this)) {
+            if (m_positionX) m_position.x += delta->x;
+            if (m_positionY) m_position.y += delta->y;
+        }
+    }
 
     // These additions write back to the object. With no live binding a
     // nonzero offset therefore accumulates on every update, exactly as in PE.

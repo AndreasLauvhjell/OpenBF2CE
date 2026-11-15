@@ -10,6 +10,9 @@ namespace dice { namespace hfe { namespace hud { namespace widescreen {
 // Process startup only. Invalid values leave the request unchanged and return false.
 bool setRequested(const std::string& value);
 bool requested();
+// [CHOSEN, not recovered] mod/combo: true when the request will take effect (requested and the
+// vanilla mods/bf2 layout); valid once configureMod ran. Our widescreen HUD yields only then.
+bool active();
 // Select the vanilla policy after all startup arguments have been parsed.
 void configureMod(const std::string& modPath);
 // Attach before constructing the HUD tree; detach on close/destruction. UI thread only.

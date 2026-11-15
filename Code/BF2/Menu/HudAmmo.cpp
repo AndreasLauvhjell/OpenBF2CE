@@ -380,16 +380,18 @@ std::string HudAmmo::getFireRateIconPath(int fireRate)
 void HudAmmo::updateCrosshairPositions(world::IWeaponObject* weapon)
 {
     if (!weapon) return;
-    auto* view = static_cast<dx9rend::IRenderView*>(
-        static_cast<menu::Ref2System*>(m_system)->getRenderView());
+    // [CHOSEN, not recovered] Widescreen HUD: retail halves the ortho view size here, which matches
+    // the 400/300 centre of the other branch only at 800x600. Use the 800x600 HUD system size
+    // instead, so the crosshair does not jump between branches on the wider canvas.
+    auto* system = static_cast<menu::Ref2System*>(m_system);
     const int deviation  = static_cast<int>(std::ceil(
         static_cast<double>(weapon->getDeviation()) * m_field100));
-    // [CHOSEN, not recovered] Issue #33: crosshair bindings remain on the authored 800x600
-    // canvas, including the maximum-deviation branch. Preserve the deviation clamp.
-    const int halfWidth  = widescreen::enabled(m_system) ? 400 : static_cast<int>(std::ceil(
-        static_cast<double>(view->getOrthoWidth()) * 0.5));
+    // [CHOSEN, not recovered] The 800x600 HUD system width gives 400 here, the same value issue #33
+    // uses while kr4uzi's widescreen HUD is on, so both HUDs keep the authored crosshair centre.
+    const int halfWidth  = static_cast<int>(std::ceil(
+        static_cast<double>(system->getWidth()) * 0.5));
     const int halfHeight = static_cast<int>(std::ceil(
-        static_cast<double>(view->getOrthoHeight()) * 0.5));
+        static_cast<double>(system->getHeight()) * 0.5));
     const int margin  = static_cast<int>(m_field0f8);
     const int minimum = m_field108;   // WeaponHudInfo::minVisualDeviation
     const int maximum = m_field104;   // WeaponHudInfo::maxVisualDeviation
