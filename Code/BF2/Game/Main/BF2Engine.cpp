@@ -98,6 +98,7 @@
 #include <cstdlib>                          // std::abort   - the same stop
 #if !DEDICATED
 #include "BF2ClientSeams.h"                 // [FRONTIER] client collaborators without recovered classes
+#include "../VideoSettings.h"                // [CHOSEN, not recovered] the display refresh rate for the frame cap
 #include "../../AI/AIInterface/AIInstance.h"   // ai::g_aiInstance, IAIInstance (ds:0xA33C08 in the client)
 #include "../LocalProfileManager.h"        // native client startup interface
 #include "../GameClient/GameClient.h"      // drawDiagnosticOverlays - the openbf2.* overlays
@@ -683,6 +684,27 @@ SingleInstanceGuard::~SingleInstanceGuard()
 #endif
 }
 #undef BF2_ENGINE_INSTANCE_MUTEX
+
+// [CHOSEN, not recovered] Set once game.lockFps / vars.lockFps stored a value; until then the main
+// loop applies the OpenBF2 default frame cap (see mainLoop).
+static bool s_lockFpsSetByConsole = false;
+
+// [CHOSEN, not recovered] The refresh rate of the chosen video mode (VideoSettings resolution
+// "WxH@RHz"), 0 when there is none (dedicated, no settings, no "@").
+static int videoModeRefreshRate()
+{
+#if !DEDICATED
+    if (!g_videoSettings)
+        return 0;
+    const std::string resolution = static_cast<IVideoSettings*>(g_videoSettings)->getResolution();
+    const std::string::size_type at = resolution.find('@');
+    if (at == std::string::npos)
+        return 0;
+    return std::atoi(resolution.c_str() + at + 1);
+#else
+    return 0;
+#endif
+}
 
 BF2Engine::BF2Engine(BF2* bf2Ptr)
     : bf2(bf2Ptr)                       // +0x08  -  the constructor's only argument
@@ -2220,6 +2242,18 @@ bool BF2Engine::mainLoop()
     // Calling the getter again at either site would be a behavioural change if it is not pure.
     const bool simRateZero = (g_system->getSimulationRate() == 0);  //  vcall +0x24
 
+    // [CHOSEN, not recovered] Client frame cap default: the higher of 120 fps and the chosen video
+    // mode's refresh rate (@165Hz gives 165; @60Hz stays 120) instead of the retail 100. A value set
+    // with game.lockFps / vars.lockFps (console or GameLogicInit.con) is kept as given. Dedicated
+    // servers are unchanged.
+    if (!isDedicated() && !s_lockFpsSetByConsole)
+    {
+        int cap = 120;
+        const int refresh = videoModeRefreshRate();
+        if (refresh > cap)
+            cap = refresh;
+        lockFPS = cap;
+    }
     // THE fixed-timestep decision (0x81374DD). The argument is the engine's simulation clock.
     int   ticks       = tickCalculator->compute(g_system->getExactTime());
     int   renderTicks = ticks;                                      // var_170 - input/render count
@@ -2648,6 +2682,8 @@ void BF2Engine::setLockFPS(int fps)
 {
     if (fps > 0)                                // the guard IS the function
         lockFPS = fps;
+    if (fps > 0)
+        s_lockFpsSetByConsole = true;           // [CHOSEN, not recovered] keep a value the user set
 }
 
 int  BF2Engine::getLockFPS() const   { return lockFPS; }
