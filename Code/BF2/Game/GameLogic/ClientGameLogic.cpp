@@ -346,8 +346,10 @@ bool ClientGameLogic::handleCollisionForProjectile(world::IObject* projectile, w
     world::GenericProjectile* const gp = static_cast<world::GenericProjectile*>(proj);
 
     const unsigned int tick = WorldPref::getTickCount();
-    if (tick - gp->getPlayedImpactEffectAtTick() <= 10u)                       // +0x11C - an unsigned compare
-        playImpact = false;
+    // [CHOSEN, not recovered] Retail (BF2.exe 0x4E2140) drops an impact effect within 10 ticks of the
+    // last one this projectile played, so a bullet that penetrates and hits again at once shows no
+    // second impact. The client plays every impact instead; the tick is still recorded below.
+    // Personal mod, no upstream issue.
 
     Vec3 contact;
     {
