@@ -7,6 +7,7 @@
 #include "ColorEscape.h"
 #include "DifFontMetadata.h"
 #include "Font.h"
+#include "InlineIcon.h"
 #include "../External/BFMeme/Action.h"
 #include "../External/BFMeme/Effect.h"
 #include "../External/BFMeme/Style.h"
@@ -509,6 +510,23 @@ void BfNewListBoxNode::paintSelf(System* system, const NodeState*, const Rect* b
                         if (!characters[characterIndex + i]) break;
                     }
                     characterIndex += 6;
+                } else if (sentinel && next == 'I') {
+                    // [CHOSEN, not recovered] Inline icon (InlineIcon.h). The draw loop reads the
+                    // four slot digits from this buffer, so they are copied here.
+                    int end = characterIndex + 2;
+                    for (; end < characterIndex + 6; ++end) {
+                        characters[end] = m_data->getCharacterElement(system, row, end);
+                        if (!characters[end]) break;
+                    }
+                    if (end < characterIndex + 6) { // truncated escape: stop at the terminator
+                        characterIndex = end;
+                        break;
+                    }
+                    const InlineIcon* icon = readInlineIcon(
+                        [&](int i) { return characters[characterIndex + 2 + i]; });
+                    if (icon) measuredWidth += inlineIconAdvance(*icon, m_rowHeight);
+                    characterIndex += 6;
+                    if (characterIndex >= 250) break;
                 } else if (controlLength) {
                     characterIndex += controlLength;
                 } else {
@@ -646,6 +664,34 @@ void BfNewListBoxNode::paintSelf(System* system, const NodeState*, const Rect* b
                         const int payload = bufferIndex + 2;
                         escapeColorSet = alternateColor && readColorEscape(
                             [&](int i) { return characters[payload + i]; }, &escapeColor);
+                        bufferIndex += 6;
+                        continue;
+                    }
+                    if (sentinel && next == 'I') {
+                        // [CHOSEN, not recovered] Inline icon (InlineIcon.h), centred on the row
+                        // and drawn untinted at the current alpha.
+                        const int payload = bufferIndex + 2;
+                        int present = 0;
+                        while (present < 4 && characters[payload + present]) ++present;
+                        if (present < 4) { // truncated escape: stop at the terminator
+                            bufferIndex = payload + present;
+                            continue;
+                        }
+                        const InlineIcon* icon = readInlineIcon(
+                            [&](int i) { return characters[payload + i]; });
+                        if (icon) {
+                            const std::pair<float, float> size = inlineIconSize(*icon, m_rowHeight);
+                            const Rect iconBounds = {
+                                cursorX + 1.0f,
+                                static_cast<float>(std::floor(static_cast<double>(
+                                    rowY + (m_rowHeight - size.second) * 0.5f))),
+                                size.first, size.second, bounds->z
+                            };
+                            const Color iconColor = {1.0f, 1.0f, 1.0f, currentColor.a};
+                            Quad iconQuad(&iconBounds, clip, &iconColor);
+                            drawContextTexture(context, system, icon->texture, &iconQuad);
+                            cursorX += inlineIconAdvance(*icon, m_rowHeight);
+                        }
                         bufferIndex += 6;
                         continue;
                     }

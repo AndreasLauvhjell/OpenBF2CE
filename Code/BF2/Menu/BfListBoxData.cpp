@@ -11,6 +11,7 @@
 #include "../External/BFMeme/Node.h"
 #include "../External/BFMeme/Style.h"
 #include "../External/BFMeme/System.h"
+#include "InlineIcon.h"   // [CHOSEN, not recovered] inline kill feed icons
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -707,6 +708,27 @@ int BfListBoxData::measureText(System* system, std::wstring text, int column, in
             mode = next - '0'; index += 2;
         } else if (character == 0xA7 && (next == 'C' || next == 'c')) {
             index += 6;
+        } else if (character == 0xA7 && next == 'I') {
+            // [CHOSEN, not recovered] Inline icon (InlineIcon.h): the whole escape fits or the
+            // line breaks before it, so wrapping never splits the six characters.
+            const wchar_t* digits = text.c_str() + index + 2;
+            const InlineIcon* icon = readInlineIcon([&](int i) {
+                for (int k = 0; k <= i; ++k) if (!digits[k]) return 0;
+                return static_cast<int>(digits[i]);
+            });
+            const float advance = icon ? inlineIconAdvance(*icon, m_node->m_rowHeight) : 0.0f;
+            int alignment = 0;
+            float imageX = 0;
+            if (static_cast<unsigned int>(column) < m_columns.size()) {
+                ListBoxColumn* entry = m_columns[column];
+                if (entry && static_cast<unsigned int>(row) < entry->cells.size()) {
+                    ListBoxCell* cell = entry->cells[row];
+                    if (cell) { imageX = cell->imageX; alignment = cell->field064; }
+                }
+            }
+            if (index > 0 && getAvailableWidth(column, alignment) < imageX + width + advance) break;
+            width += advance;
+            index += 6;
         } else {
             system->getGlyphMetrics(character, m_node->m_fonts[mode], &metrics);
             ++index;
@@ -766,6 +788,27 @@ int BfListBoxData::measureText(System* system, std::wstring text, int column, in
         if (character == 0xA7 && next >= '0' && next <= '3') {
             mode = next - '0'; index += 2;
         } else if (character == 0xA7 && (next == 'C' || next == 'c')) {
+            index += 6;
+        } else if (character == 0xA7 && next == 'I') {
+            // [CHOSEN, not recovered] Inline icon (InlineIcon.h): the whole escape fits or the
+            // line breaks before it, so wrapping never splits the six characters.
+            const wchar_t* digits = text.c_str() + index + 2;
+            const InlineIcon* icon = readInlineIcon([&](int i) {
+                for (int k = 0; k <= i; ++k) if (!digits[k]) return 0;
+                return static_cast<int>(digits[i]);
+            });
+            const float advance = icon ? inlineIconAdvance(*icon, m_node->m_rowHeight) : 0.0f;
+            int alignment = 0;
+            float imageX = 0;
+            if (static_cast<unsigned int>(column) < m_columns.size()) {
+                ListBoxColumn* entry = m_columns[column];
+                if (entry && static_cast<unsigned int>(row) < entry->cells.size()) {
+                    ListBoxCell* cell = entry->cells[row];
+                    if (cell) { imageX = cell->imageX; alignment = cell->field064; }
+                }
+            }
+            if (index > 0 && getAvailableWidth(column, alignment) < imageX + width + advance) break;
+            width += advance;
             index += 6;
         } else {
             system->getGlyphMetrics(character, m_node->m_fonts[mode], &metrics);

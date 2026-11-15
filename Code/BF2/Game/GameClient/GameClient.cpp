@@ -71,6 +71,7 @@
 #include "../DemoRecorder/DemoLibrary.h"
 #include "../LocalProfileManager.h"
 #include "../../Scene/Object/PlayerManager.h"
+#include "../Common/OpenBF2Channel.h"               // [CHOSEN, not recovered] extension-channel handshake
 #include "../../Scene/Object/ObjectManager.h"
 #include "../../Scene/Object/ObjectTypes/Base/ObjectTemplateManager.h"
 #include "../../Math/Mat4.h"                          // createObject's transform + setRotationZXY
@@ -199,6 +200,9 @@ GameClient::GameClient()
     // IEventListener sub-object (+0xAC) is what is registered, as in GameServer's constructor.
     eventManager->registerEventHandler(ECNetwork, this, 0);
     eventManager->registerEventHandler(ECCore, this, 0);
+    // [CHOSEN, not recovered] the OpenBF2 extension channel (event category 7): the welcome and the
+    // kill feed messages (Game/Common/OpenBF2Channel.h).
+    openbf2_channel::clientRegisterListener();
     // : operator new(1) with no constructor - IGame::getStatsMonitor (504C70) hands this out.
     // The client has no StatsMonitor; a one-byte object stands where the server keeps its monitor.
     m_statsMonitor = reinterpret_cast<StatsMonitor*>(new char);
@@ -272,6 +276,7 @@ void GameClient::shutdown()
     disconnect();
     eventManager->unregisterEventHandler(ECNetwork, this);
     eventManager->unregisterEventHandler(ECCore, this);
+    openbf2_channel::clientUnregisterListener();   // [CHOSEN, not recovered]
 }
 
 // requestDisconnect - 4D1C90, 23 B, the +0x120 slot: the flag (a dword 1) and the reason. update()
@@ -308,6 +313,8 @@ int GameClient::disconnect()
             delete m_netClient;                      // : the +0x74 deleting destructor
         m_netClient = 0;
     }
+    // [CHOSEN, not recovered] forget the server's extension-channel handshake.
+    openbf2_channel::clientReset();
     if (m_connection)
     {
         delete m_connection;                         // : the deleting destructor through the vtable
@@ -475,6 +482,9 @@ bool GameClient::update(int steps, float dt)
             frametiming::simLap(frametiming::SecSSound);   // [CHOSEN, not recovered] openbf2.stats.frame sim split
         }
     }
+    // [CHOSEN, not recovered] decides the extension-channel handshake once the welcome timeout has
+    // passed (logs one line then).
+    openbf2_channel::clientState();
     // Voting uses the frame's dt argument, not the separately sampled delta time.
     ClientVoteManager::getInstance()->update(dt);
     transmit(steps, delta);
@@ -2333,6 +2343,9 @@ void GameClient::handleEvent(EventCategory category, unsigned int id, EventNode*
         }
         // The store runs on both paths - the lightmap test's `je` jumps straight to it.
         m_isReady = true;                                                          // +0x158
+        // [CHOSEN, not recovered] the OpenBF2 extension-channel hello, in the same event stream
+        // right behind the ready event (Game/Common/OpenBF2Channel.h). A vanilla server drops it.
+        openbf2_channel::clientSendHello();
         break;
     }
     case 5:

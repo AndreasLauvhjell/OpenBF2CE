@@ -564,6 +564,10 @@ cl %FLAGS% "%~dp0..\BF2\Game\GameServer\BanListConsole.cpp"
 if errorlevel 1 set /a RC+=1
 cl %FLAGS% "%~dp0..\BF2\Game\Main\OpenBF2Console.cpp"
 if errorlevel 1 set /a RC+=1
+cl %FLAGS% "%~dp0..\BF2\Game\Common\OpenBF2Channel.cpp"
+if errorlevel 1 set /a RC+=1
+cl %FLAGS% "%~dp0..\BF2\Game\GameServer\KillfeedPolicy.cpp"
+if errorlevel 1 set /a RC+=1
 cl %FLAGS% "%~dp0..\BF2\Game\Common\DataBlockManager.cpp"
 cl %FLAGS% "%~dp0..\BF2\Game\Common\StringManager.cpp"
 if errorlevel 1 set /a RC+=1
@@ -1659,6 +1663,13 @@ cl %FLAGS0% "%~dp0..\BF2\Game\Objects\Visual\LightSourceTemplate.cpp"
 if errorlevel 1 set /a RC+=1
 @rem [CHOSEN, not recovered] openbf2.effects.redblood: the whole unit is client-only.
 cl %FLAGS0% "%~dp0..\BF2\Game\Objects\Fx\RedBloodHitEffects.cpp"
+if errorlevel 1 set /a RC+=1
+@rem [CHOSEN, not recovered] the kill feed over channel 7: client settings and the channel (client image).
+cl %FLAGS0% "%~dp0..\BF2\Game\Main\KillfeedSettings.cpp"
+if errorlevel 1 set /a RC+=1
+cl %FLAGS0% "%~dp0..\BF2\Game\Common\OpenBF2Channel.cpp"
+if errorlevel 1 set /a RC+=1
+cl %FLAGS0% "%~dp0..\BF2\Game\GameServer\KillfeedPolicy.cpp"
 if errorlevel 1 set /a RC+=1
 
 @rem [CHOSEN, not recovered] macOS D3DX helper TUs must remain empty on MSVC.

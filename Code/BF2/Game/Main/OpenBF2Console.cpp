@@ -35,6 +35,8 @@
 // an issue discussing the design before an upstream PR.
 
 #include "../../Core/ConsoleObjectMacro.h"
+#include "../GameServer/KillfeedPolicy.h"   // [CHOSEN, not recovered] openbf2.sv.killfeed.*
+#include "KillfeedSettings.h"           // [CHOSEN, not recovered] openbf2.hud.killfeed*
 #include "../../Core/TempLog.h"   // [TEMP] openbf2.debug.log
 
 #if DEDICATED
@@ -286,6 +288,37 @@ BF2_CONSOLE_METHOD_1_RET_ACTIVE(addModDll, openBf2AddModDll, std::string, true,
 BF2_CONSOLE_PROPERTY_FN_NAMED("sv.debug.log", bool, true, ::dice::hfe::templog::enabled(),
                               ::dice::hfe::templog::setEnabled, kOpenBf2ConsoleTag)
 
+// openbf2.sv.killfeed.* - [CHOSEN, not recovered] the kill feed policy the server imposes on OpenBF2
+// clients (Game/GameServer/KillfeedPolicy.h): show switches, distance ranges per kind, personal lines.
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.headshot.show", bool, true, killfeed_policy::killfeedPolicy().headshotShow,
+                              killfeed_policy::setKillfeedHeadshotShow, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.destroyedvehicle.show", bool, true,
+                              killfeed_policy::killfeedPolicy().vehicleShow,
+                              killfeed_policy::setKillfeedVehicleShow, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.show", bool, true, killfeed_policy::killfeedPolicy().distanceShow,
+                              killfeed_policy::setKillfeedDistanceShow, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.allowpersonalkillfeed", bool, true,
+                              killfeed_policy::killfeedPolicy().allowPersonalKillfeed,
+                              killfeed_policy::setKillfeedAllowPersonal, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.minrange.headshot", int, true,
+                              killfeed_policy::killfeedPolicy().minRange[0],
+                              killfeed_policy::setKillfeedMinRangeHeadshot, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.minrange.vehicle", int, true,
+                              killfeed_policy::killfeedPolicy().minRange[1],
+                              killfeed_policy::setKillfeedMinRangeVehicle, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.minrange.longkill", int, true,
+                              killfeed_policy::killfeedPolicy().minRange[2],
+                              killfeed_policy::setKillfeedMinRangeLongkill, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.maxrange.headshot", int, true,
+                              killfeed_policy::killfeedPolicy().maxRange[0],
+                              killfeed_policy::setKillfeedMaxRangeHeadshot, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.maxrange.vehicle", int, true,
+                              killfeed_policy::killfeedPolicy().maxRange[1],
+                              killfeed_policy::setKillfeedMaxRangeVehicle, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("sv.killfeed.distance.maxrange.longkill", int, true,
+                              killfeed_policy::killfeedPolicy().maxRange[2],
+                              killfeed_policy::setKillfeedMaxRangeLongkill, kOpenBf2ConsoleTag)
+
 // Handed to the console registry by ModuleBF2::init (Core/ModuleRegistry.cpp).
 ConsoleObjectList& openBf2ConsoleObjects()
 {
@@ -325,6 +358,54 @@ int compareIgnoreCase(const char* a, const char* b, int n);
 
 // Client bindings. Access 1, so the typed in-game console can use them.
 BF2_CONSOLE_OBJECT("openbf2", 1, 0)
+
+// openbf2.hud.killfeed.distance.show <0|1> - [CHOSEN, not recovered] the shot distance an OpenBF2 server sends
+// (openbf2.sv.killfeed.distance.show) in the kill feed and the "you killed" line; 1 (default) shows it.
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.show", bool, true, killfeed_settings::killfeedDistance(),
+                              killfeed_settings::setKillfeedDistance, kOpenBf2ConsoleTag)
+
+// openbf2.hud.killfeed.headshot.show <0|1> - [CHOSEN, not recovered] HEADSHOT in the same lines when the
+// killing hit was on the Human_head material; works on every server. 1 (default) shows it.
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.headshot.show", bool, true, killfeed_settings::killfeedHeadshot(),
+                              killfeed_settings::setKillfeedHeadshot, kOpenBf2ConsoleTag)
+
+// openbf2.hud.killfeedIcons <0|1|2> - [CHOSEN, not recovered] inline kill feed icons: 0 text, 1 weapon and
+// headshot icons, 2 (default) headshot icon only.
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeedIcons", int, true, killfeed_settings::killfeedIcons(),
+                              killfeed_settings::setKillfeedIcons, kOpenBf2ConsoleTag)
+
+// openbf2.hud.killfeed.headshot.soundvolume <0-100> - [CHOSEN, not recovered] volume of the 2D cue for your own
+// headshot; 100 (default), 0 = off.
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.headshot.soundvolume", int, true,
+                              killfeed_settings::killfeedHeadshotSoundVolume(),
+                              killfeed_settings::setKillfeedHeadshotSoundVolume, kOpenBf2ConsoleTag)
+
+// openbf2.hud.killfeed.destroyedvehicle.show <0|1> - [CHOSEN, not recovered] "HELI DESTROYED" and so on in kill lines when
+// an OpenBF2 server (openbf2.sv.killfeed.destroyedvehicle.show) says the kill destroyed the victim's vehicle; 1 (default).
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.destroyedvehicle.show", bool, true, killfeed_settings::killfeedVehicle(),
+                              killfeed_settings::setKillfeedVehicle, kOpenBf2ConsoleTag)
+
+// openbf2.hud.killfeed.distance.minrange.<kind> / maxrange.<kind> <metres> - [CHOSEN, not recovered] the
+// kill distance shows only within the range of the kill's kind: headshot (min 0), else destroyed vehicle
+// (min 0), else longkill (min 150). maxrange 0 (default) = no upper limit.
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.minrange.headshot", int, true,
+                              killfeed_settings::killfeedMinRangeHeadshot(),
+                              killfeed_settings::setKillfeedMinRangeHeadshot, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.minrange.vehicle", int, true,
+                              killfeed_settings::killfeedMinRangeVehicle(),
+                              killfeed_settings::setKillfeedMinRangeVehicle, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.minrange.longkill", int, true,
+                              killfeed_settings::killfeedMinRangeLongkill(),
+                              killfeed_settings::setKillfeedMinRangeLongkill, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.maxrange.headshot", int, true,
+                              killfeed_settings::killfeedMaxRangeHeadshot(),
+                              killfeed_settings::setKillfeedMaxRangeHeadshot, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.maxrange.vehicle", int, true,
+                              killfeed_settings::killfeedMaxRangeVehicle(),
+                              killfeed_settings::setKillfeedMaxRangeVehicle, kOpenBf2ConsoleTag)
+BF2_CONSOLE_PROPERTY_FN_NAMED("hud.killfeed.distance.maxrange.longkill", int, true,
+                              killfeed_settings::killfeedMaxRangeLongkill(),
+                              killfeed_settings::setKillfeedMaxRangeLongkill, kOpenBf2ConsoleTag)
 
 // The on-screen statistics share the member prefix "stats.". The console splits a command at its
 // first dot, so these are members "stats.net" etc. of the openbf2 object, the same shape as retail's

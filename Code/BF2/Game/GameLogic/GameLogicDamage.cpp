@@ -14,6 +14,8 @@
 #include "../IGame.h"                                     // game - exitVehicle, the two sends
 #include "../IGameLogic.h"                                // gameLogic - getHitIndicationThreshold, killPlayer
 #include "../Common/GameEvent.h"                          // PostRemoteEvent
+#include "../Common/OpenBF2Channel.h"                     // [CHOSEN, not recovered] kill distance (MSG_KILL_DISTANCE)
+#include "../GameServer/KillfeedPolicy.h"                 // [CHOSEN, not recovered] openbf2.sv.killfeed.*
 #include "../GameEvents/KilledByEvent.h"
 #include "../GameServer/ServerSettings.h"                 // the four friendly-fire percentages
 #include "../Objects/IObject.h"
@@ -77,6 +79,51 @@ IObject* projectileObjectGetDesignatedTarget(void* projectileObject)
 int designatedTargetGetPlayerId(IObject* target)
 {
     return static_cast<TargetObject*>(target)->getTargetPlayerId();
+}
+
+// [CHOSEN, not recovered] openbf2.sv.killfeed.distance.show: the shot distance of a kill, sent over the OpenBF2
+// extension channel (Game/Common/OpenBF2Channel.h) to every client that announced CAP_KILL_DISTANCE,
+// just before the retail KilledByEvent of the same kill. Only a kill whose damage came from a
+// projectile has one: retail hands serverGiveDamage the projectile itself as the source object (bullets
+// from serverHandleCollisionForProjectile, which also passes getStartPos() as the position - Linux bf2
+// 0x489F20 amd64; explosions from GameLogicExplosion with the exploding projectile). The distance runs
+// from the projectile's start position (muzzle, throw or launch point) to the victim's root object.
+void sendKillDistanceFor(const KilledByData& data, IObject* sourceObject, IObject* victimRoot)
+{
+    if (!sourceObject || !victimRoot || data.killerPlayerId == data.victimPlayerId)
+        return;
+    IObject* const sourceRoot = getRootParent(sourceObject);
+    void* const face = sourceRoot ? sourceRoot->queryInterface(IID_IProjectileObject) : 0;
+    if (!face)
+        return;                                   // a crash, a fall or a scripted kill: no distance
+    GenericProjectile* const projectile = static_cast<GenericProjectile*>(static_cast<IProjectileObject*>(face));
+    const Vec3 start = projectile->getStartPos();
+    const Vec3& at = victimRoot->getAbsolutePosition();
+    const float dx = at.x - start.x;
+    const float dy = at.y - start.y;
+    const float dz = at.z - start.z;
+    openbf2_channel::KillDistance message;
+    message.version        = openbf2_channel::kKillDistanceVersion;
+    message.victimPlayerId = data.victimPlayerId;
+    message.killerPlayerId = data.killerPlayerId;
+    message.flags          = 0;
+    message.metres         = std::sqrt(dx * dx + dy * dy + dz * dz);
+    openbf2_channel::sendKillDistance(message);
+}
+
+// [CHOSEN, not recovered] openbf2.sv.killfeed.destroyedvehicle.show: tells every client that announced CAP_KILL_VEHICLE
+// that this kill destroyed the victim's vehicle (vehicleRoot), just before the retail KilledByEvent.
+void sendKillVehicleFor(const KilledByData& data, IObject* vehicleRoot)
+{
+    if (!vehicleRoot || data.killerPlayerId == data.victimPlayerId)
+        return;
+    openbf2_channel::KillVehicle message;
+    message.version        = openbf2_channel::kKillVehicleVersion;
+    message.victimPlayerId = data.victimPlayerId;
+    message.killerPlayerId = data.killerPlayerId;
+    message.flags          = openbf2_channel::kKillVehicleDestroyed;
+    message.templateId     = vehicleRoot->getTemplate()->getId();
+    openbf2_channel::sendKillVehicle(message);
 }
 } // namespace
 
@@ -232,6 +279,9 @@ void GameLogicDamage::serverGiveDamage(IObject* object, float damage, IPlayer* a
     bool wreckDies = false;
     const bool wasDamaged = armor->getStatus() != 0;                              // +0x5C
     bool soldier = owner->getTemplate()->getClassID() == CID_SoldierTemplate;
+    // [CHOSEN, not recovered] openbf2.sv.killfeed.destroyedvehicle.show: the damaged object itself is a vehicle, read
+    // before retail reuses `soldier` for a soldier riding outside his default vehicle.
+    const bool vehicleHit = !soldier;
 
     IPlayerControlObject* pco = findPco(owner);
     if (pco)
@@ -465,6 +515,14 @@ void GameLogicDamage::serverGiveDamage(IObject* object, float damage, IPlayer* a
             KilledByData data;
             std::memset(&data, 0, sizeof(data));
             fillKilledByData(data, attacker, victim, weapon, vehicle, armor, material, vehicleKill);
+            // [CHOSEN, not recovered] openbf2.sv.killfeed.distance.show: the distance goes first, in the same
+            // per-connection queue, so the client holds it when the kill event builds its line.
+            if (attacker && killfeed_policy::killfeedSendsDistance())
+                sendKillDistanceFor(data, sourceObject, root);
+            // [CHOSEN, not recovered] openbf2.sv.killfeed.destroyedvehicle.show: this damage hit the vehicle and took
+            // its hit points to zero (retail's `dies` on a non-soldier owner), so the victim died with it.
+            if (attacker && vehicleHit && dies && killfeed_policy::killfeedSendsVehicle())
+                sendKillVehicleFor(data, root);
             KilledByEvent* event = new KilledByEvent(data);
             game->sendGameEventToAllConnected(event);                             // +0x94
             eventManager->postEvent(ECGameLogic, 3, &data, 0.0f);                 // raw 0x80E093A..

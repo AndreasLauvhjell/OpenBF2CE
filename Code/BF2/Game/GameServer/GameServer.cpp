@@ -120,6 +120,7 @@
 #include "../Objects/Game/StickyProjectileManager.h" // ctor/shutdown-owned singleton
 #include "../Objects/ObjectLayoutAccess.h"      // simulatePlayersUpdate reads the vehicle's parent link
 #include "../Utility/Vars.h"                    // coll-dump-all-tests
+#include "../Common/OpenBF2Channel.h"           // [CHOSEN, not recovered] extension-channel handshake
 #include "../../Scene/Object/PlayerManager.h"   // playerManager - the local human player, the player list
 #include "../../Physics/PhysicsNodeManager.h"   // physicsNodeManager->update / postFrameUpdate
 #include "../../Physics/ResponsePhysicsManager.h"   // responsePhysicsManager - the frame protocol
@@ -1933,6 +1934,7 @@ void GameServer::shutdown()
     eventManager->unregisterEventHandler(ECNetwork, this);
     eventManager->unregisterEventHandler(ECCore, this);
     eventManager->unregisterEventHandler(ECHud, this);
+    openbf2_channel::serverUnregisterListener();   // [CHOSEN, not recovered]
 }
 
 GameServer::GameServer()
@@ -1983,6 +1985,8 @@ GameServer::GameServer()
     eventManager->registerEventHandler(ECCore, this, 0);
     eventManager->registerEventHandler(ECHud, this, 0);
     eventManager->registerEventHandler(ECGameLogic, this, 0);
+    // [CHOSEN, not recovered] the OpenBF2 extension channel's hello listener (event category 7).
+    openbf2_channel::serverRegisterListener();
 
     (void)new world::StickyProjectileManager;
     m_networkableStats = new io::BasicNetworkStats;
@@ -3957,6 +3961,7 @@ void GameServer::closeClientConnection(int connectionId, unsigned int reason, co
     const int gameId = static_cast<ServerConnection*>(connection)->m_gameId;   // +0x184, read first
     m_connections.erase(static_cast<unsigned char>(connectionId));            // +0x74
     delete connection;
+    openbf2_channel::serverForgetConnection(connectionId);                    // [CHOSEN, not recovered]
 
     m_netServer->closeConnection(connectionId, reason, text);                 // +0x64 -> +0x5C
     m_matchMakingServer->getAuthenticator()->disconnectPlayer(gamespy::g_gameID, connectionId);   // +0x14
