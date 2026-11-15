@@ -15,6 +15,7 @@ contribution workflow and validation requirements.
 | Editor console commands and script undo | [Editor console guide](editor-console.md) |
 | macOS port status, port rules and the client/Metal frontier | [macOS port](macos-port.md) |
 | CD keys without the registry: `Registry.con` and the Windows `Registry.dat` contract | [Client registry file](registry-file.md) |
+| Optional OpenAL Soft and HRTF audio setup | [OpenAL Soft and HRTF audio](openal-soft-hrtf.md) |
 
 ## macOS port
 

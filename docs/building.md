@@ -335,6 +335,7 @@ The renderer and atlas DLLs compile and link against the installed DirectX SDK d
 below, and at run time need the matching `d3dx9_25.dll`. Client runtime dependencies also
 include the game's Bink component, TextureAtlasBuilder, and an OpenAL provider for audio.
 The audio build always compiles the vendored Ogg/Vorbis decoder in, as the shipped DLL links its own.
+[OpenAL Soft and HRTF audio](openal-soft-hrtf.md) describes an optional OpenAL Soft setup.
 
 The CMake client target stages all four rebuilt DLLs above. It also stages Python
 when present at configuration time. Keep runtime testing in a separate
