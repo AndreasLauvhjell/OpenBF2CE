@@ -29,6 +29,10 @@ public:
     // [RETIRE-WHEN: bf2-picture-native-accessors] Replace after the corresponding Node virtual slots are typed and validated.
     void setSelectableForHud(bool selectable);         // 7C39B0, +C8
 protected:
+    // [CHOSEN, not recovered] The retail painter; paintSelf replays a recorded paint instead while
+    // nothing it reads has changed (mod/hud-perf list box paint cache).
+    void paintSelfUncached(System*, const NodeState*, const Rect*, const Rect*, RenderContext*);
+    unsigned long long paintCacheKey(System*, const Rect*, const Rect*, RenderContext*);
     // [INFERRED] Row-navigation helpers used by queued input events.
     bool selectPreviousRow(System*);
     bool selectNextRow(System*, const Rect*);

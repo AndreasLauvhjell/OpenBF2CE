@@ -22,6 +22,9 @@ public:
     virtual bool setRgbBindings(const float* red, const float* green,
                                 const float* blue);        // +5C 7C2380
     static TypeDescriptor* getClassType();                 // 7C2440, metadata936080
+    // [CHOSEN, not recovered] The current values behind the four bindings (alpha, red, green, blue;
+    // a missing binding reads as -1), for the list box paint cache key (mod/hud-perf).
+    void sampleBindings(float values[4]) const;
 protected:
     // +14 is not written by the constructor; only slot +54 ever sets it.
     void* m_owner;                    // +14, uninitialised on construction

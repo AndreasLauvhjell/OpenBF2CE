@@ -75,6 +75,12 @@ struct QuadProbe : dice::hfe::geom::IQuadDrawer
     void beginFrame() override { calls.push_back(0x214); }
     void resetState() override { calls.push_back(0x218); }
     void endFrame() override { calls.push_back(0x21C); }
+    // Recording slots (mod/hud-perf list box paint cache): the fixture records nothing.
+    int createRecording() override { return -1; }
+    void releaseRecording(int) override {}
+    void beginRecording(int) override {}
+    void endRecording() override {}
+    bool replayRecording(int) override { return false; }
 };
 static QuadProbe quadDrawer;
 struct ClassProbe : dice::hfe::ClassManager

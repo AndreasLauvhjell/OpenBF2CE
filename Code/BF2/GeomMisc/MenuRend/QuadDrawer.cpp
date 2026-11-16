@@ -26,6 +26,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <new>
+#include <vector>                             // [CHOSEN, not recovered] HUD geometry recordings
 
 namespace dice {
 namespace hfe {
@@ -133,6 +134,12 @@ public:
     void  endFrame();                               // +0x1C
     void  submit(MemeTexture* tex, QuadDrawRequest* req,
                  float u0, float v0, float u1, float v1);   // sub_1008B480
+    // [CHOSEN, not recovered] Geometry recordings (IQuadDrawer, mod/hud-perf).
+    int   createRecording();
+    void  releaseRecording(int id);
+    void  beginRecording(int id);
+    void  endRecording();
+    bool  replayRecording(int id);
     void  handleECCoreEvent(int category, unsigned int id, unsigned char* payload);
     void  onDeviceLost()  { m_suspended = 1; }
     void  onDeviceReset() { m_basePos = 0; m_suspended = 0; }
@@ -161,6 +168,7 @@ private:
     void  initialize();
     void  cacheState(MemeTexture* tex, QuadDrawRequest* req);
     void  uploadStateParams();                      // sub_1008B290
+    void  recordAppended(unsigned int firstVertex);  // [CHOSEN, not recovered] recordings
 
     void*          m_vptr;
     void*          m_deviceLostVptr;
@@ -216,6 +224,12 @@ void RD9_THUNK qd_flush(void* s RD9_THUNK_EDX)      { static_cast<QuadDrawer*>(s
 void RD9_THUNK qd_beginFrame(void* s RD9_THUNK_EDX) { static_cast<QuadDrawer*>(s)->beginFrame(); }
 void RD9_THUNK qd_resetState(void* s RD9_THUNK_EDX) { static_cast<QuadDrawer*>(s)->resetState(); }
 void RD9_THUNK qd_endFrame(void* s RD9_THUNK_EDX)   { static_cast<QuadDrawer*>(s)->endFrame(); }
+// [CHOSEN, not recovered] Recording slots appended after the retail table.
+int  RD9_THUNK qd_createRecording(void* s RD9_THUNK_EDX)          { return static_cast<QuadDrawer*>(s)->createRecording(); }
+void RD9_THUNK qd_releaseRecording(void* s RD9_THUNK_EDX, int id) { static_cast<QuadDrawer*>(s)->releaseRecording(id); }
+void RD9_THUNK qd_beginRecording(void* s RD9_THUNK_EDX, int id)   { static_cast<QuadDrawer*>(s)->beginRecording(id); }
+void RD9_THUNK qd_endRecording(void* s RD9_THUNK_EDX)             { static_cast<QuadDrawer*>(s)->endRecording(); }
+bool RD9_THUNK qd_replayRecording(void* s RD9_THUNK_EDX, int id)  { return static_cast<QuadDrawer*>(s)->replayRecording(id); }
 
 #if !defined(_MSC_VER)
 // [CHOSEN, not recovered] Match the shared consumer interface under the native ABI.
@@ -229,9 +243,14 @@ void* const kQuadDrawerVtable[] =
     BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, beginFrame, qd_beginFrame),
     BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, resetState, qd_resetState),
     BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, endFrame, qd_endFrame),
+    BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, createRecording, qd_createRecording),
+    BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, releaseRecording, qd_releaseRecording),
+    BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, beginRecording, qd_beginRecording),
+    BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, endRecording, qd_endRecording),
+    BF2_NATIVE_SLOT(::dice::hfe::geom::IQuadDrawer, replayRecording, qd_replayRecording),
 };
 #else
-void* const kQuadDrawerVtable[8] =
+void* const kQuadDrawerVtable[13] =
 {
     reinterpret_cast<void*>(&qd_addRef),          // +0x00  0x10132630  ICF_incrementDwordAt0xC
     reinterpret_cast<void*>(&qd_getRef),          // +0x04  0x10051710  ICF_getDwordAt0xC
@@ -240,7 +259,13 @@ void* const kQuadDrawerVtable[8] =
     reinterpret_cast<void*>(&qd_flush),           // +0x10
     reinterpret_cast<void*>(&qd_beginFrame),      // +0x14
     reinterpret_cast<void*>(&qd_resetState),      // +0x18
-    reinterpret_cast<void*>(&qd_endFrame)         // +0x1C
+    reinterpret_cast<void*>(&qd_endFrame),        // +0x1C
+    // [CHOSEN, not recovered] Recording slots, IQuadDrawer order.
+    reinterpret_cast<void*>(&qd_createRecording), // +0x20
+    reinterpret_cast<void*>(&qd_releaseRecording),// +0x24
+    reinterpret_cast<void*>(&qd_beginRecording),  // +0x28
+    reinterpret_cast<void*>(&qd_endRecording),    // +0x2C
+    reinterpret_cast<void*>(&qd_replayRecording)  // +0x30
 };
 #endif
 
@@ -606,6 +631,7 @@ void QuadDrawer::submit(MemeTexture* tex, QuadDrawRequest* req,
             cacheState(tex, req);
         }
     }
+    const unsigned int recordFirst = m_vertexCount;    // [CHOSEN, not recovered] recordings
 
     if (!req->clipRect)
     {
@@ -641,6 +667,7 @@ void QuadDrawer::submit(MemeTexture* tex, QuadDrawRequest* req,
         v[5].x = v[0].x; v[5].y = v[0].y; v[5].z = v[0].z;
         v[5].r = v[0].r; v[5].g = v[0].g; v[5].b = v[0].b; v[5].a = v[0].a;
         v[5].u1 = v[0].u1; v[5].v1 = v[0].v1;
+        recordAppended(recordFirst);                   // [CHOSEN, not recovered]
         return;
     }
 
@@ -768,6 +795,187 @@ void QuadDrawer::submit(MemeTexture* tex, QuadDrawRequest* req,
             v[k].u2 = tri[k][9]; v[k].v2 = tri[k][10];
         }
     }
+    recordAppended(recordFirst);                       // [CHOSEN, not recovered]
+}
+
+// [CHOSEN, not recovered] Geometry recordings (mod/hud-perf). Retail builds every HUD quad again
+// on every frame; a HUD element whose output has not changed (the in-game chat box with outlined
+// text is the expensive case, nine quads per glyph) can record its submitted quads once and replay
+// them on later frames. Replay appends the recorded vertices with the recorded batch state through
+// the same state-change and capacity rules as submit, so draw order and batching match a normal
+// paint. The recordings live outside the class so the retail QuadDrawer layout is unchanged.
+namespace {
+
+struct RecordedBatch
+{
+    MemeTexture*  texture;
+    MemeTexture*  texture2;
+    unsigned char blend;
+    unsigned int  dw08, dw0C, dw10, dw14;
+    unsigned char byte18;
+    std::vector<QuadVertex> vertices;
+};
+
+struct Recording
+{
+    bool used;
+    bool complete;
+    std::vector<RecordedBatch> batches;
+};
+
+std::vector<Recording> g_recordings;
+int g_activeRecording = -1;
+
+bool recordingIsValid(int id)
+{
+    return id >= 0 && static_cast<unsigned int>(id) < g_recordings.size() && g_recordings[id].used;
+}
+
+} // anonymous namespace
+
+int QuadDrawer::createRecording()
+{
+    for (unsigned int i = 0; i < g_recordings.size(); ++i)
+    {
+        if (!g_recordings[i].used)
+        {
+            g_recordings[i].used = true;
+            g_recordings[i].complete = false;
+            g_recordings[i].batches.clear();
+            return static_cast<int>(i);
+        }
+    }
+    Recording recording;
+    recording.used = true;
+    recording.complete = false;
+    g_recordings.push_back(recording);
+    return static_cast<int>(g_recordings.size() - 1);
+}
+
+void QuadDrawer::releaseRecording(int id)
+{
+    if (!recordingIsValid(id))
+        return;
+    if (g_activeRecording == id)
+        g_activeRecording = -1;
+    g_recordings[id].used = false;
+    g_recordings[id].complete = false;
+    std::vector<RecordedBatch>().swap(g_recordings[id].batches);
+}
+
+void QuadDrawer::beginRecording(int id)
+{
+    if (!recordingIsValid(id))
+        return;
+    g_recordings[id].batches.clear();
+    g_recordings[id].complete = false;
+    g_activeRecording = id;
+}
+
+void QuadDrawer::endRecording()
+{
+    if (g_activeRecording >= 0)
+        g_recordings[g_activeRecording].complete = true;
+    g_activeRecording = -1;
+}
+
+// Copies the vertices submit just appended (from firstVertex) into the active recording, starting
+// a new batch whenever the cached batch state differs from the previous batch's.
+void QuadDrawer::recordAppended(unsigned int firstVertex)
+{
+    if (g_activeRecording < 0 || m_captureMode || m_vertexCount <= firstVertex)
+        return;
+    std::vector<RecordedBatch>& batches = g_recordings[g_activeRecording].batches;
+    const bool sameState = !batches.empty()
+        && batches.back().texture  == m_cachedTexture
+        && batches.back().texture2 == m_cachedTexture2
+        && batches.back().blend    == m_cachedBlend
+        && batches.back().dw08     == m_cachedDw08
+        && batches.back().dw0C     == m_cachedDw0C
+        && batches.back().dw10     == m_cachedDw10
+        && batches.back().dw14     == m_cachedDw14
+        && batches.back().byte18   == m_cachedByte18;
+    if (!sameState)
+    {
+        RecordedBatch batch;
+        batch.texture  = m_cachedTexture;
+        batch.texture2 = m_cachedTexture2;
+        batch.blend    = m_cachedBlend;
+        batch.dw08     = m_cachedDw08;
+        batch.dw0C     = m_cachedDw0C;
+        batch.dw10     = m_cachedDw10;
+        batch.dw14     = m_cachedDw14;
+        batch.byte18   = m_cachedByte18;
+        batches.push_back(batch);
+    }
+    std::vector<QuadVertex>& vertices = batches.back().vertices;
+    vertices.insert(vertices.end(), &m_vertices[firstVertex], &m_vertices[m_vertexCount]);
+}
+
+// Appends a complete recording. Each batch goes through submit's state comparison (textures by
+// their wrapped EngineTexture) and flushes on a change; vertices are copied in whole triangles and
+// flushed when the batch buffer fills, as submit does.
+bool QuadDrawer::replayRecording(int id)
+{
+    if (!recordingIsValid(id) || !g_recordings[id].complete || g_activeRecording >= 0 || m_captureMode)
+        return false;
+
+    const std::vector<RecordedBatch>& batches = g_recordings[id].batches;
+    for (std::vector<RecordedBatch>::const_iterator batch = batches.begin(); batch != batches.end(); ++batch)
+    {
+        bool texChanged;
+        if (m_cachedTexture)
+            texChanged = !batch->texture
+                || memeTextureEngineTexture(batch->texture) != memeTextureEngineTexture(m_cachedTexture);
+        else
+            texChanged = batch->texture != 0;
+
+        bool tex2Changed;
+        if (batch->texture2 && m_cachedTexture2)
+            tex2Changed = memeTextureEngineTexture(batch->texture2)
+                != memeTextureEngineTexture(m_cachedTexture2);
+        else
+            tex2Changed = (batch->texture2 != 0) != (m_cachedTexture2 != 0);
+
+        if (texChanged || tex2Changed
+            || batch->blend  != m_cachedBlend
+            || batch->dw08   != m_cachedDw08
+            || batch->dw0C   != m_cachedDw0C
+            || batch->dw10   != m_cachedDw10
+            || batch->byte18 != m_cachedByte18
+            || batch->dw14   != m_cachedDw14)
+        {
+            flush();
+            m_cachedTexture  = batch->texture;
+            m_cachedTexture2 = batch->texture2;
+            m_cachedBlend    = batch->blend;
+            m_cachedDw08     = batch->dw08;
+            m_cachedDw0C     = batch->dw0C;
+            m_cachedDw10     = batch->dw10;
+            m_cachedDw14     = batch->dw14;
+            m_cachedByte18   = batch->byte18;
+            cacheHalfTexels(this, m_cachedTexture, m_cachedTexture2,
+                            &m_halfTexelU1, &m_halfTexelV1, &m_halfTexelU2, &m_halfTexelV2);
+        }
+
+        const QuadVertex* source = batch->vertices.empty() ? 0 : &batch->vertices[0];
+        unsigned int remaining = static_cast<unsigned int>(batch->vertices.size());
+        while (remaining)
+        {
+            if (m_vertexCount + 6 >= 0x6000)
+                flush();
+            unsigned int space = 0x6000 - 6 - m_vertexCount;
+            unsigned int count = remaining < space ? remaining : space;
+            count -= count % 3;
+            if (!count)
+                count = remaining < 3 ? remaining : 3;
+            ::memcpy(&m_vertices[m_vertexCount], source, count * sizeof(QuadVertex));
+            m_vertexCount += count;
+            source += count;
+            remaining -= count;
+        }
+    }
+    return true;
 }
 
 namespace {

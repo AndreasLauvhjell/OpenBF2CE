@@ -149,6 +149,12 @@ struct PaintDrawer : geom::IQuadDrawer {
     void beginFrame() override {trace.push_back("begin");}
     void resetState() override {trace.push_back("reset");}
     void endFrame() override {trace.push_back("end");}
+    // Recording slots (mod/hud-perf list box paint cache) are outside this fixture.
+    int createRecording() override {actionUnsupported("drawer createRecording");}
+    void releaseRecording(int) override {actionUnsupported("drawer releaseRecording");}
+    void beginRecording(int) override {actionUnsupported("drawer beginRecording");}
+    void endRecording() override {actionUnsupported("drawer endRecording");}
+    bool replayRecording(int) override {actionUnsupported("drawer replayRecording");}
 };
 struct PaintClasses : ClassManager {
     PaintDrawer drawer;

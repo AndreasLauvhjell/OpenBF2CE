@@ -14,10 +14,19 @@
 #include "../External/BFMeme/System.h"
 #include "../External/BFMeme/TypeDescriptor.h"
 #include "../IO/Input/Input.h"
+#include "Bf2ColorEffect.h"                        // [CHOSEN, not recovered] paint cache
+#include "../External/BFMeme/AlphaFadeEffect.h"   // [CHOSEN, not recovered] paint cache
+#include "../External/BFMeme/BlendFuncEffect.h"   // [CHOSEN, not recovered] paint cache
+#include "../External/BFMeme/ColorEffect.h"       // [CHOSEN, not recovered] paint cache
+#include "../Core/ClassManager.h"                 // [CHOSEN, not recovered] paint cache
+#include "../GeomMisc/MenuRend/IQuadDrawer.h"     // [CHOSEN, not recovered] paint cache
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>                                // [CHOSEN, not recovered] paint cache
+#include <map>                                    // [CHOSEN, not recovered] paint cache
+#include <vector>                                 // [CHOSEN, not recovered] paint cache
 // [CHOSEN, not recovered] SSE2 is used only by the Windows x64 arm; arm64 has no emmintrin.h.
 #if defined(_WIN32) && !defined(_M_IX86)
 #include <emmintrin.h>
@@ -25,6 +34,7 @@
 namespace dice { namespace hfe { namespace io {
 extern IBase* inputDeviceManager;
 } } }
+namespace dice { namespace hfe { extern ClassManager* classManager; } }
 namespace dice { namespace meme {
 namespace {
 // Floors then converts to int with truncating x87 control, preserving NaN and out-of-range results.
@@ -61,6 +71,72 @@ int floorToInt(double value)
 #endif
 }
 int floorFloatToInt(float value) { return floorToInt(static_cast<double>(value)); }
+
+// [CHOSEN, not recovered] List box paint cache (mod/hud-perf). Retail rebuilds every list box quad
+// on every frame. The in-game chat box draws outlined text, nine quads per glyph, and with many
+// bots it stays full, so it alone can cost more than a millisecond per frame. A list box now
+// records its quads through the QuadDrawer and replays them while everything its painter reads is
+// unchanged; any change (text, colour, scroll position, pointer hover, bounds, the effect chain)
+// changes the key and the box is painted and recorded again. BF2_HUD_LISTBOX_CACHE=0 turns the
+// cache off. State is kept per node outside the class so the retail layout is unchanged.
+struct ListBoxPaintCache
+{
+    int recording;
+    bool valid;
+    unsigned long long key;
+};
+std::map<const void*, ListBoxPaintCache>& listBoxPaintCaches()
+{
+    static std::map<const void*, ListBoxPaintCache> caches;
+    return caches;
+}
+// Recording ids of destroyed nodes, reused by new nodes (released nodes never call into RendDX9,
+// which may already be shut down when the HUD is destroyed).
+std::vector<int>& freeListBoxRecordings()
+{
+    static std::vector<int> ids;
+    return ids;
+}
+bool listBoxPaintCacheEnabled()
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* const value = std::getenv("BF2_HUD_LISTBOX_CACHE");
+        enabled = (value && value[0] == '0') ? 0 : 1;
+    }
+    return enabled != 0;
+}
+hfe::geom::IQuadDrawer* listBoxQuadDrawer()
+{
+    static hfe::geom::IQuadDrawer* drawer = nullptr;
+    if (!drawer && hfe::classManager)
+        drawer = static_cast<hfe::geom::IQuadDrawer*>(
+            hfe::classManager->getSingleton(std::string("QuadDrawer")));
+    return drawer;
+}
+// FNV-1a over raw bytes.
+struct PaintKeyHash
+{
+    unsigned long long value;
+    PaintKeyHash() : value(1469598103934665603ULL) {}
+    void bytes(const void* data, std::size_t size)
+    {
+        const unsigned char* p = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            value ^= p[i];
+            value *= 1099511628211ULL;
+        }
+    }
+    template<class T> void add(const T& item) { bytes(&item, sizeof(item)); }
+    void add(const std::string& text) { add(text.size()); bytes(text.data(), text.size()); }
+    void add(const std::wstring& text)
+    {
+        add(text.size());
+        bytes(text.data(), text.size() * sizeof(wchar_t));
+    }
+};
 }
 
 BfNewListBoxNode::BfNewListBoxNode()
@@ -80,7 +156,18 @@ BfNewListBoxNode::BfNewListBoxNode()
     for (auto& word : m_field10c) word = 0;
     for (FontHandle& font : m_fonts) font = 0;
 }
-BfNewListBoxNode::~BfNewListBoxNode() {} // list destruction, then Node/Object
+BfNewListBoxNode::~BfNewListBoxNode() // list destruction, then Node/Object
+{
+    // [CHOSEN, not recovered] Paint cache: the recording id goes back to the free list.
+    std::map<const void*, ListBoxPaintCache>& caches = listBoxPaintCaches();
+    const std::map<const void*, ListBoxPaintCache>::iterator found = caches.find(this);
+    if (found != caches.end())
+    {
+        if (found->second.recording >= 0)
+            freeListBoxRecordings().push_back(found->second.recording);
+        caches.erase(found);
+    }
+}
 unsigned int BfNewListBoxNode::getObjectSize() { return sizeof(BfNewListBoxNode); }
 bool BfNewListBoxNode::enqueueEvent(int type)
 {
@@ -356,13 +443,158 @@ bool BfNewListBoxNode::updateSelf(System* system, const NodeState* state,
     m_field108 = true;
     return true;
 }
+// [CHOSEN, not recovered] Paint cache key: every input paintSelfUncached reads, so an equal key
+// means the painter would submit the same quads again. Taken before painting to test the cache
+// and after painting to store it, since the painter itself rewrites some of these (wrapped rows,
+// visible-row count, scroll thumb).
+unsigned long long BfNewListBoxNode::paintCacheKey(System* system, const Rect* bounds,
+                                                   const Rect* clip, RenderContext* context)
+{
+    PaintKeyHash hash;
+    hash.add(system);
+    hash.add(*bounds);
+    hash.add(clip != nullptr);
+    if (clip) hash.add(*clip);
+    for (const RenderContext* level = context; level; level = level->parent)
+    {
+        hash.add(level->effect);
+        hash.add(level->field08); hash.add(level->field0c); hash.add(level->field10);
+        hash.add(level->field14); hash.add(level->field18);
+        Effect* const effect = level->effect;
+        if (!effect) continue;
+        // Only effects whose output follows from what is hashed here are cacheable: the plain
+        // ones read their own fields and the context, Bf2ColorEffect also its bound values.
+        // Anything else (VariableColorEffect reads Data values, MoveEffect animates) keeps the
+        // retail per-frame paint; 0 means "do not cache".
+        TypeDescriptor* const type = effect->getType();
+        if (type == Bf2ColorEffect::getClassType())
+        {
+            float bound[4];
+            static_cast<Bf2ColorEffect*>(effect)->sampleBindings(bound);
+            hash.bytes(bound, sizeof(bound));
+        }
+        else if (type != Effect::getClassType() && type != ColorEffect::getClassType()
+                 && type != AlphaFadeEffect::getClassType()
+                 && type != BlendFuncEffect::getClassType())
+        {
+            return 0;
+        }
+        if (const Color* const color = effect->getColor()) hash.add(*color);
+        hash.bytes(effect, effect->getObjectSize());
+    }
+
+    hash.add(m_firstRow); hash.add(m_visibleRows); hash.add(m_data);
+    hash.add(m_rowHeight); hash.add(m_spacing); hash.add(m_borderWidth); hash.add(m_scrollWidth);
+    hash.add(m_field02c); hash.add(m_field030);
+    for (FontHandle font : m_fonts) hash.add(font);
+    hash.add(m_selectable); hash.add(m_border);
+    hash.add(m_top); hash.add(m_bottom); hash.add(m_left); hash.add(m_right);
+    hash.add(m_background); hash.add(m_frame); hash.add(m_selection);
+    hash.add(m_scrollbar); hash.add(m_scrollbarBackground); hash.add(m_scrollOffset);
+    hash.add(m_field07c); hash.add(m_field080);
+    hash.add(m_field108); hash.add(m_field109);
+    if (m_field108 && m_field109)
+    {
+        hash.add(m_field10c[0]); hash.add(m_field10c[1]);
+        const float* const pointer = system->getPointerPosition();
+        hash.add(pointer[0]); hash.add(pointer[1]);
+    }
+    if (!m_data) return hash.value ? hash.value : 1;
+
+    hash.add(m_data->m_row); hash.add(m_data->m_outline); hash.add(m_data->m_field021);
+    hash.add(m_data->m_field024); hash.add(m_data->m_visibleRows);
+    hash.add(m_data->m_field034); hash.add(m_data->m_field038); hash.add(m_data->m_field03c);
+    hash.add(m_data->m_field040); hash.add(m_data->m_resource); hash.add(m_data->m_columnCount);
+    const ListBoxColumn* const first = m_data->m_columns.empty() ? nullptr : m_data->m_columns[0];
+    const int rowCount = first ? static_cast<int>(first->cells.size()) : 0;
+    hash.add(rowCount);
+    const int shownRows = std::min(m_data->m_visibleRows, rowCount);
+    for (const ListBoxColumn* column : m_data->m_columns)
+    {
+        hash.add(column != nullptr);
+        if (!column) continue;
+        hash.add(column->index); hash.add(column->width); hash.add(column->enabled);
+        hash.add(column->field019); hash.add(column->field01a);
+        hash.add(column->field01c); hash.add(column->field020);
+        hash.add(column->cells.size());
+        // Rows from the first shown one; one extra row covers the wrap writes into row + 1.
+        for (int row = m_firstRow; row < m_firstRow + shownRows + 1; ++row)
+        {
+            const ListBoxCell* const cell =
+                row >= 0 && static_cast<unsigned int>(row) < column->cells.size()
+                    ? column->cells[row] : nullptr;
+            hash.add(cell != nullptr);
+            if (!cell) continue;
+            hash.add(cell->narrow); hash.add(cell->wide); hash.add(cell->isWide);
+            hash.add(cell->color); hash.add(cell->texture);
+            hash.add(cell->imageWidth); hash.add(cell->imageHeight);
+            hash.add(cell->imageX); hash.add(cell->imageY); hash.add(cell->isImage);
+            hash.add(cell->field064); hash.add(cell->field068); hash.add(cell->field06c);
+            hash.add(cell->highlight); hash.add(cell->highlightField080);
+            hash.add(cell->highlightField084); hash.add(cell->highlightField088);
+            hash.add(cell->field090);
+        }
+    }
+    return hash.value ? hash.value : 1;   // 0 is reserved for "do not cache"
+}
+
+// [CHOSEN, not recovered] Paints through the list box paint cache (see ListBoxPaintCache).
+void BfNewListBoxNode::paintSelf(System* system, const NodeState* state, const Rect* bounds,
+                                 const Rect* clip, RenderContext* context)
+{
+    hfe::geom::IQuadDrawer* const drawer =
+        listBoxPaintCacheEnabled() ? listBoxQuadDrawer() : nullptr;
+    if (!drawer)
+    {
+        paintSelfUncached(system, state, bounds, clip, context);
+        return;
+    }
+
+    std::map<const void*, ListBoxPaintCache>& caches = listBoxPaintCaches();
+    std::map<const void*, ListBoxPaintCache>::iterator found = caches.find(this);
+    if (found == caches.end())
+    {
+        ListBoxPaintCache cache;
+        std::vector<int>& freeIds = freeListBoxRecordings();
+        if (!freeIds.empty())
+        {
+            cache.recording = freeIds.back();
+            freeIds.pop_back();
+        }
+        else
+        {
+            cache.recording = drawer->createRecording();
+        }
+        cache.valid = false;
+        cache.key = 0;
+        found = caches.insert(std::make_pair(static_cast<const void*>(this), cache)).first;
+    }
+    ListBoxPaintCache& cache = found->second;
+
+    const unsigned long long key = paintCacheKey(system, bounds, clip, context);
+    if (!key)
+    {
+        cache.valid = false;
+        paintSelfUncached(system, state, bounds, clip, context);
+        return;
+    }
+    if (cache.valid && cache.key == key && drawer->replayRecording(cache.recording))
+        return;
+
+    drawer->beginRecording(cache.recording);
+    paintSelfUncached(system, state, bounds, clip, context);
+    drawer->endRecording();
+    cache.key = paintCacheKey(system, bounds, clip, context);
+    cache.valid = cache.key != 0;
+}
+
 // This is the complete retail painter. Several behaviours that look
 // accidental are observable and intentionally retained: the background is
 // unconditional, highlighted rows are submitted twice, missing cells retain
 // the previous cell colour, wrapped rows mutate every column while painting,
 // and the pending-row upper clamp can make m_firstRow negative.
-void BfNewListBoxNode::paintSelf(System* system, const NodeState*, const Rect* bounds,
-                                 const Rect* clip, RenderContext* context)
+void BfNewListBoxNode::paintSelfUncached(System* system, const NodeState*, const Rect* bounds,
+                                         const Rect* clip, RenderContext* context)
 {
     const auto drawSolid = [&](float x, float y, float width, float height, float z,
                                const Color& color, int texture) {

@@ -78,6 +78,15 @@ bool Bf2ColorEffect::drawTexture(System* system, TextureHandle texture, Quad* qu
     return Effect::drawTexture(system, texture, quad, context);
 }
 
+// [CHOSEN, not recovered] Paint cache key support (mod/hud-perf): the values the bindings point at now.
+void Bf2ColorEffect::sampleBindings(float values[4]) const
+{
+    values[0] = m_alphaBinding ? *m_alphaBinding : -1.0f;
+    values[1] = m_redBinding ? *m_redBinding : -1.0f;
+    values[2] = m_greenBinding ? *m_greenBinding : -1.0f;
+    values[3] = m_blueBinding ? *m_blueBinding : -1.0f;
+}
+
 #if defined(_M_IX86)
 static_assert(sizeof(Bf2ColorEffect) == 48, "native Bf2ColorEffect storage");
 static_assert(sizeof(ClassTypeDescriptor<Bf2ColorEffect, ColorEffect>) == 16,
